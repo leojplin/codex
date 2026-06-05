@@ -1,3 +1,23 @@
+<p align="center"><strong>Codex CLI Prompt Autocomplete Fork</strong></p>
+
+This fork adds editor-style prompt autocomplete to Codex CLI.
+
+You are most likely here for the Rust CLI fork in [`codex-rs`](./codex-rs). Go there for installation, usage, release, and implementation notes:
+
+```bash
+cd codex-rs
+```
+
+Install the latest macOS ARM64 release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leojplin/codex/main/codex-rs/setup.sh | bash
+```
+
+---
+
+The upstream Codex README follows.
+
 <p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
 <p align="center">
   <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
