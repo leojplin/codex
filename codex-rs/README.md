@@ -6,6 +6,38 @@ The goal is to make the prompt behave closer to a code editor: completions appea
 
 ## Installation
 
+### Latest Release
+
+Install the latest macOS ARM64 release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leojplin/codex/main/codex-rs/setup.sh | bash
+```
+
+This installs to `~/.local/bin/codex-fork` by default and does not replace an existing official `codex` command.
+
+To install somewhere else:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/leojplin/codex/main/codex-rs/setup.sh | INSTALL_DIR="$HOME/.cargo/bin" bash
+```
+
+Check that the fork is installed:
+
+```bash
+~/.local/bin/codex-fork
+```
+
+### Homebrew
+
+Install the latest release with Homebrew:
+
+```bash
+brew install --formula https://github.com/leojplin/codex/releases/latest/download/codex-fork.rb
+```
+
+### Build From Source
+
 Run these commands from the `codex-rs` directory in this fork.
 
 If you do not have Rust installed yet:
@@ -15,22 +47,34 @@ cd path/to/codex-rs
 xcode-select --install
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
-cargo install --path cli --bin codex-fork --force
+cargo install --locked --path cli --bin codex-fork --force
 ```
 
 If you already have Rust installed:
 
 ```bash
 cd path/to/codex-rs
-cargo install --path cli --bin codex-fork --force
+cargo install --locked --path cli --bin codex-fork --force
 ```
 
-This installs to `~/.cargo/bin/codex-fork` and does not replace an existing official `codex` command. Check that the fork is installed:
+This installs to `~/.cargo/bin/codex-fork`.
+
+### Creating A Release
+
+The GitHub release workflow builds only the macOS ARM64 binary.
+
+Create and push a tag to publish a release:
 
 ```bash
-which codex-fork
-codex-fork
+git tag codex-fork-v0.1.0
+git push origin codex-fork-v0.1.0
 ```
+
+The workflow publishes:
+
+- `codex-fork-aarch64-apple-darwin.tar.gz`
+- `SHA256SUMS`
+- `codex-fork.rb`
 
 ## Usage
 

@@ -1,0 +1,164 @@
+name: codex-fork-release
+
+on:
+  push:
+    tags:
+      - "codex-fork-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  ASSET_STEM: codex-fork-aarch64-apple-darwin
+  BIN_NAME: codex-fork
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  TARGET: aarch64-apple-darwin
+
+jobs:
+  release:
+    name: Build macOS ARM64 release
+    runs-on: macos-14
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: codex-rs
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Validate release tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "Run this workflow from a codex-fork-v* tag, or push a codex-fork-v* tag."
+            exit 1
+          fi
+
+          tag="${GITHUB_REF_NAME}"
+          if [[ "${tag}" != codex-fork-v* ]]; then
+            echo "Release tag must start with codex-fork-v: ${tag}"
+            exit 1
+          fi
+
+          version="${tag#codex-fork-v}"
+          if [[ -z "${version}" ]]; then
+            echo "Release tag is missing a version: ${tag}"
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build codex-fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p codex-cli --bin "${BIN_NAME}" --target "${TARGET}"
+
+      - name: Package release assets
+        id: package
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          dist_dir="${PWD}/dist"
+          package_dir="${RUNNER_TEMP}/${ASSET_STEM}"
+          archive="${dist_dir}/${ASSET_STEM}.tar.gz"
+          formula="${dist_dir}/codex-fork.rb"
+          checksums="${dist_dir}/SHA256SUMS"
+
+          rm -rf "${dist_dir}" "${package_dir}"
+          mkdir -p "${dist_dir}" "${package_dir}"
+
+          cp "target/${TARGET}/release/${BIN_NAME}" "${package_dir}/${BIN_NAME}"
+          strip "${package_dir}/${BIN_NAME}" || true
+          chmod 0755 "${package_dir}/${BIN_NAME}"
+          cp README.md "${package_dir}/README.md"
+          cp setup.sh "${package_dir}/setup.sh"
+
+          tar -C "${package_dir}" -czf "${archive}" "${BIN_NAME}" README.md setup.sh
+          shasum -a 256 "${archive}" | sed "s#${dist_dir}/##" > "${checksums}"
+          sha256="$(cut -d ' ' -f 1 "${checksums}")"
+
+          cat > "${formula}" <<EOF
+          class CodexFork < Formula
+            desc "Codex CLI fork with prompt autocomplete"
+            homepage "https://github.com/${GITHUB_REPOSITORY}"
+            url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${ASSET_STEM}.tar.gz"
+            sha256 "${sha256}"
+            version "${RELEASE_VERSION}"
+
+            depends_on arch: :arm64
+
+            def install
+              bin.install "codex-fork"
+            end
+
+            test do
+              assert_match "codex", shell_output("#{bin}/codex-fork --version")
+            end
+          end
+          EOF
+
+          echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
+          echo "checksums=${checksums}" >> "${GITHUB_OUTPUT}"
+          echo "formula=${formula}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          CHECKSUMS: ${{ steps.package.outputs.checksums }}
+          FORMULA: ${{ steps.package.outputs.formula }}
+        run: |
+          set -euo pipefail
+
+          notes="${RUNNER_TEMP}/codex-fork-release-notes.md"
+          cat > "${notes}" <<EOF
+          macOS ARM64 release for codex-fork ${RELEASE_VERSION}.
+
+          Install latest release:
+
+          \`\`\`bash
+          curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/codex-rs/setup.sh -o /tmp/codex-fork-setup.sh
+          bash /tmp/codex-fork-setup.sh
+          \`\`\`
+
+          Install with Homebrew:
+
+          \`\`\`bash
+          brew install --formula https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/codex-fork.rb
+          \`\`\`
+          EOF
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "codex-fork ${RELEASE_VERSION}" \
+              --notes-file "${notes}"
+          else
+            gh release create "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "codex-fork ${RELEASE_VERSION}" \
+              --notes-file "${notes}"
+          fi
+
+          gh release upload "${RELEASE_TAG}" \
+            "${ARCHIVE}" \
+            "${CHECKSUMS}" \
+            "${FORMULA}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
