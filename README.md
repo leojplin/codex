@@ -1,5 +1,9 @@
 <p align="center"><strong>Codex CLI Prompt Autocomplete Fork</strong></p>
 
+<p align="center">
+  <img src="images/prompt-autocomplete.png" alt="Codex CLI prompt autocomplete popup" width="90%" />
+</p>
+
 This fork adds editor-style prompt autocomplete to Codex CLI.
 
 You are most likely here for the Rust CLI fork in [`codex-rs`](./codex-rs). Go there for installation, usage, release, and implementation notes:
