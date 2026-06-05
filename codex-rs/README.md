@@ -4,32 +4,31 @@ This fork adds editor-style autocomplete to the Codex CLI prompt input.
 
 The goal is to make the prompt behave closer to a code editor: completions appear near the cursor, update as the user keeps typing, can be cycled with `Tab`, and are accepted with `Enter`.
 
-## Use This Fork
+## Installation
 
-From this repo:
-
-```bash
-cargo run -p codex-cli --bin codex
-```
-
-Build it first if you want to check compilation:
+If you do not have Rust installed yet:
 
 ```bash
-cargo build -p codex-tui
+xcode-select --install
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+cargo install --path cli --bin codex-fork --force
 ```
 
-Install the fork as your `codex` command:
+If you already have Rust installed:
 
 ```bash
-cargo install --path cli --bin codex --force
+cargo install --path cli --bin codex-fork --force
 ```
 
-This installs to `~/.cargo/bin/codex`. Make sure `~/.cargo/bin` is on your `PATH`:
+This installs to `~/.cargo/bin/codex-fork` and does not replace an existing official `codex` command. Check that the fork is installed:
 
 ```bash
-which codex
-codex
+which codex-fork
+codex-fork
 ```
+
+## Usage
 
 Autocomplete is enabled by default. In the prompt, type part of a word and press `Tab` to cycle candidates. Press `Enter` to accept the selected candidate.
 
@@ -43,22 +42,16 @@ dictionary = true
 
 Set `enabled = false` to turn autocomplete off. Set `dictionary = false` to keep session completions but remove dictionary completions.
 
-## Install From Scratch
-
-If you do not have Rust installed yet:
+Run from this repo without installing:
 
 ```bash
-xcode-select --install
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-cargo install --path cli --bin codex --force
+cargo run -p codex-cli --bin codex-fork
 ```
 
-Check that the fork is installed:
+Build it first if you want to check compilation:
 
 ```bash
-which codex
-codex
+cargo build -p codex-tui
 ```
 
 ## Feature Summary
@@ -194,7 +187,7 @@ cargo build -p codex-tui
 Run the CLI manually:
 
 ```bash
-cargo run -p codex-cli --bin codex
+cargo run -p codex-cli --bin codex-fork
 ```
 
 ## Manual Verification
