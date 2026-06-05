@@ -111,7 +111,8 @@ impl TranscriptAreaRenderable<'_> {
 
 impl Renderable for ChatWidget {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.as_renderable().render(area, buf);
+        let renderable = self.as_renderable();
+        renderable.render(area, buf);
         self.last_rendered_width.set(Some(area.width as usize));
     }
 
@@ -125,5 +126,22 @@ impl Renderable for ChatWidget {
 
     fn cursor_style(&self, area: Rect) -> crossterm::cursor::SetCursorStyle {
         self.as_renderable().cursor_style(area)
+    }
+}
+
+impl ChatWidget {
+    pub(crate) fn completion_popup_overlay_buffer(
+        &self,
+        cursor_x: u16,
+        cursor_y: u16,
+        screen_width: u16,
+        screen_height: u16,
+    ) -> Option<Buffer> {
+        self.bottom_pane.completion_popup_overlay_buffer(
+            cursor_x,
+            cursor_y,
+            screen_width,
+            screen_height,
+        )
     }
 }

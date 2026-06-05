@@ -25,6 +25,8 @@ use std::io;
 use std::io::Write;
 
 use crossterm::cursor::MoveTo;
+use crossterm::cursor::RestorePosition;
+use crossterm::cursor::SavePosition;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::queue;
 use crossterm::style::Colors;
@@ -490,6 +492,21 @@ where
     /// content outside ratatui's knowledge.
     pub fn invalidate_viewport(&mut self) {
         self.previous_buffer_mut().reset();
+    }
+
+    pub(crate) fn draw_overlay_buffer(&mut self, overlay: &Buffer) -> io::Result<()> {
+        queue!(self.backend, SavePosition)?;
+        let commands = overlay.content.iter().enumerate().map(|(index, cell)| {
+            let (x, y) = overlay.pos_of(index);
+            DrawCommand::Put {
+                x,
+                y,
+                cell: cell.clone(),
+            }
+        });
+        draw(&mut self.backend, commands)?;
+        queue!(self.backend, RestorePosition)?;
+        Backend::flush(&mut self.backend)
     }
 
     /// Clear terminal scrollback (if supported) and force a full redraw.

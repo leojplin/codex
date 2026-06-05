@@ -194,6 +194,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::task::JoinHandle;
 use toml::Value as TomlValue;
 use uuid::Uuid;
+
 mod agent_message_consolidation;
 mod agent_navigation;
 mod agent_status_feed;
@@ -210,6 +211,7 @@ mod pending_interactive_replay;
 mod pets;
 mod platform_actions;
 mod plugin_mentions;
+mod prompt_autocomplete_overlay;
 mod replay_filter;
 mod resize_reflow;
 mod session_lifecycle;
@@ -524,6 +526,7 @@ pub(crate) struct App {
     has_emitted_history_lines: bool,
     transcript_reflow: TranscriptReflowState,
     initial_history_replay_buffer: Option<InitialHistoryReplayBuffer>,
+    completion_overlay_rect: Option<Rect>,
 
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) keymap: RuntimeKeymap,
@@ -1019,6 +1022,7 @@ See the Codex keymap documentation for supported actions and examples."
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),
             initial_history_replay_buffer: None,
+            completion_overlay_rect: None,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: terminal_title_invalid_items_warned.clone(),
@@ -1336,14 +1340,17 @@ See the Codex keymap documentation for supported actions and examples."
         tui: &mut tui::Tui,
         terminal_resize_reflow_enabled: bool,
     ) -> Result<Rect> {
-        let desired_height = self.chat_widget.desired_height(tui.terminal.size()?.width);
+        let terminal_size = tui.terminal.size()?;
+        let desired_height = self.chat_widget.desired_height(terminal_size.width);
         let mut rendered_area = Rect::default();
+        let mut cursor_position = None;
         if terminal_resize_reflow_enabled {
             tui.draw_with_resize_reflow(desired_height, |frame| {
                 let area = frame.area();
                 rendered_area = area;
                 self.chat_widget.render(area, frame.buffer);
                 if let Some((x, y)) = self.chat_widget.cursor_pos(area) {
+                    cursor_position = Some((x, y));
                     frame.set_cursor_style(self.chat_widget.cursor_style(area));
                     frame.set_cursor_position((x, y));
                 }
@@ -1354,11 +1361,13 @@ See the Codex keymap documentation for supported actions and examples."
                 rendered_area = area;
                 self.chat_widget.render(area, frame.buffer);
                 if let Some((x, y)) = self.chat_widget.cursor_pos(area) {
+                    cursor_position = Some((x, y));
                     frame.set_cursor_style(self.chat_widget.cursor_style(area));
                     frame.set_cursor_position((x, y));
                 }
             })?;
         }
+        self.draw_completion_terminal_overlay(tui, cursor_position)?;
         Ok(rendered_area)
     }
 }
