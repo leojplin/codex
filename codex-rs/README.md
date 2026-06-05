@@ -6,9 +6,12 @@ The goal is to make the prompt behave closer to a code editor: completions appea
 
 ## Installation
 
+Run these commands from the `codex-rs` directory in this fork.
+
 If you do not have Rust installed yet:
 
 ```bash
+cd path/to/codex-rs
 xcode-select --install
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
@@ -18,6 +21,7 @@ cargo install --path cli --bin codex-fork --force
 If you already have Rust installed:
 
 ```bash
+cd path/to/codex-rs
 cargo install --path cli --bin codex-fork --force
 ```
 
@@ -45,12 +49,14 @@ Set `enabled = false` to turn autocomplete off. Set `dictionary = false` to keep
 Run from this repo without installing:
 
 ```bash
+cd path/to/codex-rs
 cargo run -p codex-cli --bin codex-fork
 ```
 
 Build it first if you want to check compilation:
 
 ```bash
+cd path/to/codex-rs
 cargo build -p codex-tui
 ```
 
