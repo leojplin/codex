@@ -1,4 +1,6 @@
 use super::*;
+use crate::app_event::RealtimeWebrtcEvent;
+use crate::app_event::RealtimeWebrtcSessionHandle;
 use codex_app_server_protocol::ThreadRealtimeAudioChunk;
 use codex_app_server_protocol::ThreadRealtimeClosedNotification;
 use codex_app_server_protocol::ThreadRealtimeErrorNotification;
@@ -7,9 +9,8 @@ use codex_app_server_protocol::ThreadRealtimeOutputAudioDeltaNotification;
 use codex_app_server_protocol::ThreadRealtimeStartTransport;
 use codex_app_server_protocol::ThreadRealtimeStartedNotification;
 use codex_config::config_toml::RealtimeTransport;
-use codex_realtime_webrtc::RealtimeWebrtcEvent;
+#[cfg(feature = "webrtc")]
 use codex_realtime_webrtc::RealtimeWebrtcSession;
-use codex_realtime_webrtc::RealtimeWebrtcSessionHandle;
 #[cfg(not(target_os = "linux"))]
 use std::sync::atomic::AtomicU16;
 #[cfg(not(target_os = "linux"))]
@@ -492,6 +493,7 @@ impl ChatWidget {
     }
 }
 
+#[cfg(feature = "webrtc")]
 fn start_realtime_webrtc_offer_task(app_event_tx: AppEventSender) {
     std::thread::spawn(move || {
         let result = match RealtimeWebrtcSession::start() {
@@ -516,6 +518,13 @@ fn start_realtime_webrtc_offer_task(app_event_tx: AppEventSender) {
             Err(err) => Err(err.to_string()),
         };
         app_event_tx.send(AppEvent::RealtimeWebrtcOfferCreated { result });
+    });
+}
+
+#[cfg(not(feature = "webrtc"))]
+fn start_realtime_webrtc_offer_task(app_event_tx: AppEventSender) {
+    app_event_tx.send(AppEvent::RealtimeWebrtcOfferCreated {
+        result: Err("Realtime WebRTC is unavailable in this build".to_string()),
     });
 }
 

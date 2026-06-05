@@ -21,6 +21,10 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+default = ["webrtc"]
+webrtc = ["dep:codex-realtime-webrtc"]
+
 [dependencies]
 anyhow = { workspace = true }
 base64 = { workspace = true }
@@ -49,7 +53,7 @@ codex-models-manager = { workspace = true }
 codex-otel = { workspace = true }
 codex-plugin = { workspace = true }
 codex-protocol = { workspace = true }
-codex-realtime-webrtc = { workspace = true }
+codex-realtime-webrtc = { workspace = true, optional = true }
 codex-rollout = { workspace = true }
 codex-sandboxing = { workspace = true }
 codex-shell-command = { workspace = true }

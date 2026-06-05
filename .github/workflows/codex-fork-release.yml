@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --locked --release -p codex-cli --bin "${BIN_NAME}" --target "${TARGET}"
+          cargo build --locked --release -p codex-cli --bin "${BIN_NAME}" --target "${TARGET}" --no-default-features
 
       - name: Package release assets
         id: package
