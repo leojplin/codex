@@ -1,5 +1,9 @@
 # Codex CLI Prompt Autocomplete Fork
 
+<p align="center">
+  <img src="../images/prompt-autocomplete.png" alt="Codex CLI prompt autocomplete popup" width="90%" />
+</p>
+
 This fork adds editor-style autocomplete to the Codex CLI prompt input.
 
 The goal is to make the prompt behave closer to a code editor: completions appear near the cursor, update as the user keeps typing, can be cycled with `Tab`, and are accepted with `Enter`.
