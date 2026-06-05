@@ -647,6 +647,29 @@ pub struct ModelAvailabilityNuxConfig {
     pub shown_count: HashMap<String, u32>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct PromptAutocompleteConfig {
+    /// Enable prompt autocomplete in the TUI.
+    /// Defaults to `true`.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+
+    /// Include English dictionary words as a prompt autocomplete source.
+    /// Defaults to `true`.
+    #[serde(default = "default_enabled")]
+    pub dictionary: bool,
+}
+
+impl Default for PromptAutocompleteConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            dictionary: true,
+        }
+    }
+}
+
 /// Fallback resize-reflow row cap when Codex cannot identify a terminal-specific scrollback size.
 pub const DEFAULT_TERMINAL_RESIZE_REFLOW_FALLBACK_MAX_ROWS: usize = 1_000;
 
@@ -676,6 +699,10 @@ pub struct Tui {
     /// Defaults to `false`.
     #[serde(default)]
     pub raw_output_mode: bool,
+
+    /// Prompt autocomplete settings.
+    #[serde(default)]
+    pub prompt_autocomplete: PromptAutocompleteConfig,
 
     /// Controls whether the TUI uses the terminal's alternate screen buffer.
     ///

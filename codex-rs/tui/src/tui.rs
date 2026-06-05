@@ -27,6 +27,7 @@ use crossterm::terminal::LeaveAlternateScreen;
 use crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::backend::Backend;
 use ratatui::backend::CrosstermBackend;
+use ratatui::buffer::Buffer;
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::disable_raw_mode;
 use ratatui::crossterm::terminal::enable_raw_mode;
@@ -768,6 +769,10 @@ impl Tui {
         self.pending_history_lines.clear();
     }
 
+    pub(crate) fn draw_overlay_buffer(&mut self, overlay: &Buffer) -> Result<()> {
+        self.terminal.draw_overlay_buffer(overlay)
+    }
+
     /// Resize the inline viewport for the resize-reflow path.
     ///
     /// Unlike the legacy draw path, this path does not scroll rows above the viewport when the
@@ -783,8 +788,7 @@ impl Tui {
         let viewport_was_bottom_aligned =
             terminal.viewport_area.bottom() == terminal.last_known_screen_size.height;
         let previous_area = terminal.viewport_area;
-
-        let mut area = terminal.viewport_area;
+        let mut area = previous_area;
         area.height = height.min(size.height);
         area.width = size.width;
         let mut needs_full_repaint = false;

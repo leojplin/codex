@@ -1181,6 +1181,8 @@ impl ChatWidget {
     fn flush_active_cell(&mut self) {
         if let Some(active) = self.transcript.active_cell.take() {
             self.transcript.needs_final_message_separator = true;
+            self.bottom_pane
+                .ingest_completion_history_cell(active.as_ref());
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
         }
     }
@@ -1209,6 +1211,8 @@ impl ChatWidget {
             }
             self.transcript.needs_final_message_separator = true;
         }
+        self.bottom_pane
+            .ingest_completion_history_cell(cell.as_ref());
         self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
     }
 

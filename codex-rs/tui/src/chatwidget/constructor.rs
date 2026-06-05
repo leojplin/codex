@@ -90,20 +90,26 @@ impl ChatWidget {
             frame_requester.clone(),
             app_event_tx.clone(),
         );
+        let mut bottom_pane = BottomPane::new(BottomPaneParams {
+            frame_requester: frame_requester.clone(),
+            app_event_tx: app_event_tx.clone(),
+            has_input_focus: true,
+            enhanced_keys_supported,
+            placeholder_text: placeholder.clone(),
+            disable_paste_burst: config.disable_paste_burst,
+            animations_enabled: config.animations,
+            skills: None,
+        });
+        bottom_pane.set_prompt_autocomplete_config(
+            config.tui_prompt_autocomplete.enabled,
+            config.tui_prompt_autocomplete.dictionary,
+        );
+
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
             frame_requester: frame_requester.clone(),
             codex_op_target,
-            bottom_pane: BottomPane::new(BottomPaneParams {
-                frame_requester,
-                app_event_tx,
-                has_input_focus: true,
-                enhanced_keys_supported,
-                placeholder_text: placeholder.clone(),
-                disable_paste_burst: config.disable_paste_burst,
-                animations_enabled: config.animations,
-                skills: None,
-            }),
+            bottom_pane,
             transcript: TranscriptState::new(active_cell),
             raw_output_mode: config.tui_raw_output_mode,
             config,

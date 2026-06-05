@@ -159,6 +159,7 @@ use super::chat_composer_history::ChatComposerHistory;
 use super::chat_composer_history::HistoryEntry;
 use super::chat_composer_history::HistoryEntryResponse;
 use super::command_popup::CommandItem;
+use super::completion_index::MIN_COMPLETION_QUERY_CHARS;
 use super::file_search_popup::FileSearchPopup;
 use super::footer::CollaborationModeIndicator;
 use super::footer::FooterKeyHints;
@@ -406,6 +407,12 @@ pub(crate) struct ComposerDraftSnapshot {
     pub(crate) remote_image_urls: Vec<String>,
     pub(crate) mention_bindings: Vec<MentionBinding>,
     pub(crate) pending_pastes: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CompletionContext {
+    pub(crate) token_range: Range<usize>,
+    pub(crate) query: String,
 }
 
 const FOOTER_SPACING_HEIGHT: u16 = 0;
@@ -1876,6 +1883,16 @@ impl ChatComposer {
         }
     }
 
+    pub(crate) fn replace_completion_token(&mut self, range: Range<usize>, replacement: &str) {
+        self.draft
+            .textarea
+            .replace_range(range.clone(), replacement);
+        self.draft
+            .textarea
+            .set_cursor(range.start.saturating_add(replacement.len()));
+        self.sync_bash_mode_from_text();
+    }
+
     /// Handle key events when the legacy skill mention popup is visible.
     fn handle_key_event_with_skill_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
         if self.handle_shortcut_overlay_key(&key_event) {
@@ -2427,6 +2444,47 @@ impl ChatComposer {
             return None;
         }
         Self::current_prefixed_token(&self.draft.textarea, '$', /*allow_empty*/ true)
+    }
+
+    pub(crate) fn completion_context(&self) -> Option<CompletionContext> {
+        if !self.draft.input_enabled || self.attachments.selected_remote_image_index.is_some() {
+            return None;
+        }
+
+        let text = self.draft.textarea.text();
+        if text.is_empty() {
+            return None;
+        }
+
+        let cursor = Self::clamp_to_char_boundary(text, self.draft.textarea.cursor());
+        let start = text[..cursor]
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !is_completion_token_char(*ch))
+            .map(|(idx, ch)| idx + ch.len_utf8())
+            .unwrap_or(0);
+        let end = text[cursor..]
+            .char_indices()
+            .find(|(_, ch)| !is_completion_token_char(*ch))
+            .map(|(idx, _)| cursor + idx)
+            .unwrap_or(text.len());
+
+        if start >= end {
+            return None;
+        }
+
+        let token = text[start..end].to_string();
+        if token.chars().count() < MIN_COMPLETION_QUERY_CHARS
+            || token.starts_with('@')
+            || token.starts_with('$')
+        {
+            return None;
+        }
+
+        Some(CompletionContext {
+            token_range: start..end,
+            query: token,
+        })
     }
 
     /// Replace the active `@token` (the one under the cursor) with `path`.
@@ -4013,6 +4071,14 @@ fn is_mention_name_char_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
 }
 
+fn is_completion_token_char(ch: char) -> bool {
+    ch.is_alphanumeric()
+        || matches!(
+            ch,
+            '_' | '-' | '.' | '/' | '\\' | ':' | '~' | '%' | '+' | '?' | '&' | '=' | '#'
+        )
+}
+
 fn find_next_mention_token_range(text: &str, token: &str, from: usize) -> Option<Range<usize>> {
     if token.is_empty() || from >= text.len() {
         return None;
@@ -4455,6 +4521,7 @@ impl ChatComposer {
                     .render_ref(textarea_rect.inner(Margin::new(0, 0)), buf);
             }
         }
+        drop(state);
     }
 }
 

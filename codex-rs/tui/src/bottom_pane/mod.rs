@@ -23,6 +23,7 @@ use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::pending_input_preview::PendingInputPreview;
 use crate::bottom_pane::pending_thread_approvals::PendingThreadApprovals;
 use crate::bottom_pane::unified_exec_footer::UnifiedExecFooter;
+use crate::history_cell::HistoryCell;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
@@ -93,6 +94,8 @@ pub(crate) struct MentionBinding {
 mod chat_composer;
 mod chat_composer_history;
 mod command_popup;
+mod completion_index;
+mod completion_popup;
 pub(crate) mod custom_prompt_view;
 mod experimental_features_view;
 mod file_search_popup;
@@ -141,6 +144,7 @@ mod paste_burst;
 mod pending_input_preview;
 mod pending_thread_approvals;
 pub(crate) mod popup_consts;
+mod prompt_autocomplete;
 mod scroll_state;
 mod selection_popup_common;
 mod selection_tabs;
@@ -185,6 +189,7 @@ pub(crate) use chat_composer::ChatComposerConfig;
 pub(crate) use chat_composer::InputResult;
 pub(crate) use chat_composer::QueuedInputAction;
 pub(crate) use chat_composer_history::HistoryEntry;
+use prompt_autocomplete::PromptAutocomplete;
 
 use crate::status_indicator_widget::StatusDetailsCapitalization;
 use crate::status_indicator_widget::StatusIndicatorWidget;
@@ -207,6 +212,7 @@ pub(crate) struct BottomPane {
     /// Composer is retained even when a BottomPaneView is displayed so the
     /// input state is retained when the view is closed.
     composer: ChatComposer,
+    prompt_autocomplete: PromptAutocomplete,
 
     /// Stack of views displayed instead of the composer (e.g. popups/modals).
     view_stack: Vec<Box<dyn BottomPaneView>>,
@@ -276,6 +282,7 @@ impl BottomPane {
         composer.set_skill_mentions(skills);
         Self {
             composer,
+            prompt_autocomplete: PromptAutocomplete::default(),
             view_stack: Vec::new(),
             delayed_approval_requests: VecDeque::new(),
             last_composer_activity_at: None,
@@ -301,6 +308,17 @@ impl BottomPane {
     pub fn set_skills(&mut self, skills: Option<Vec<SkillMetadata>>) {
         self.composer.set_skill_mentions(skills);
         self.request_redraw();
+    }
+
+    pub(crate) fn set_prompt_autocomplete_config(&mut self, enabled: bool, dictionary: bool) {
+        if self.prompt_autocomplete.set_config(
+            enabled,
+            dictionary,
+            &self.composer,
+            !self.view_stack.is_empty() || self.composer.popup_active(),
+        ) {
+            self.request_redraw();
+        }
     }
 
     /// Update image-paste behavior for the active composer and repaint immediately.
@@ -492,6 +510,7 @@ impl BottomPane {
     }
 
     fn push_view(&mut self, view: Box<dyn BottomPaneView>) {
+        self.clear_completion_popup();
         self.view_stack.push(view);
         self.schedule_active_view_frame();
         self.request_redraw();
@@ -634,7 +653,7 @@ impl BottomPane {
             if self.keymap.chat.interrupt_turn.is_pressed(key_event)
                 && self.is_task_running
                 && !(is_agent_command && key_event.code == KeyCode::Esc)
-                && !self.composer.popup_active()
+                && !self.popup_active()
                 && !self.composer_should_handle_vim_insert_escape(key_event)
                 && let Some(status) = &self.status
             {
@@ -654,11 +673,22 @@ impl BottomPane {
                             | KeyCode::Enter
                             | KeyCode::Tab
                     );
+            if let Some(input_result) = self
+                .prompt_autocomplete
+                .handle_key_event(key_event, &mut self.composer)
+            {
+                if records_composer_activity {
+                    self.record_composer_activity_at(Instant::now());
+                }
+                self.request_redraw();
+                return input_result;
+            }
             let (input_result, needs_redraw) = self.composer.handle_key_event(key_event);
             if records_composer_activity {
                 self.record_composer_activity_at(Instant::now());
             }
-            if needs_redraw {
+            let completion_needs_redraw = self.sync_completion_popup();
+            if needs_redraw || completion_needs_redraw {
                 self.request_redraw();
             }
             if self.composer.is_in_paste_burst() {
@@ -721,7 +751,8 @@ impl BottomPane {
             if has_pasted_text {
                 self.record_composer_activity_at(Instant::now());
             }
-            if needs_redraw {
+            let completion_needs_redraw = self.sync_completion_popup();
+            if needs_redraw || completion_needs_redraw {
                 self.request_redraw();
             }
         }
@@ -729,7 +760,30 @@ impl BottomPane {
 
     pub(crate) fn insert_str(&mut self, text: &str) {
         self.composer.insert_str(text);
+        self.sync_completion_popup();
         self.request_redraw();
+    }
+
+    pub(crate) fn ingest_completion_history_cell(&mut self, cell: &dyn HistoryCell) {
+        let ingested = self.prompt_autocomplete.ingest_history_cell(cell);
+        if ingested && self.sync_completion_popup() {
+            self.request_redraw();
+        }
+    }
+
+    fn popup_active(&self) -> bool {
+        self.prompt_autocomplete.popup_active() || self.composer.popup_active()
+    }
+
+    fn clear_completion_popup(&mut self) -> bool {
+        self.prompt_autocomplete.clear_popup()
+    }
+
+    fn sync_completion_popup(&mut self) -> bool {
+        self.prompt_autocomplete.sync(
+            &self.composer,
+            !self.view_stack.is_empty() || self.composer.popup_active(),
+        )
     }
 
     pub(crate) fn pre_draw_tick(&mut self) {
@@ -738,6 +792,7 @@ impl BottomPane {
 
     fn pre_draw_tick_at(&mut self, now: Instant) {
         self.composer.sync_popups();
+        self.sync_completion_popup();
         self.maybe_show_delayed_approval_requests_at(now);
         self.schedule_active_view_frame();
     }
@@ -765,6 +820,7 @@ impl BottomPane {
         self.composer
             .set_text_content(text, text_elements, local_image_paths);
         self.composer.move_cursor_to_end();
+        self.sync_completion_popup();
         self.request_redraw();
     }
 
@@ -786,6 +842,7 @@ impl BottomPane {
             local_image_paths,
             mention_bindings,
         );
+        self.sync_completion_popup();
         self.request_redraw();
     }
 
@@ -1254,12 +1311,12 @@ impl BottomPane {
     /// overlays or popups and not running a task. This is the safe context to
     /// use Esc-Esc for backtracking from the main view.
     pub(crate) fn is_normal_backtrack_mode(&self) -> bool {
-        !self.is_task_running && self.view_stack.is_empty() && !self.composer.popup_active()
+        !self.is_task_running && self.view_stack.is_empty() && !self.popup_active()
     }
 
     /// Return true when no popups or modal views are active, regardless of task state.
     pub(crate) fn can_launch_external_editor(&self) -> bool {
-        self.view_stack.is_empty() && !self.composer.popup_active()
+        self.view_stack.is_empty() && !self.popup_active()
     }
 
     /// Returns true when the bottom pane has no active modal view and no active composer popup.
@@ -1472,6 +1529,7 @@ impl BottomPane {
     fn on_active_view_complete(&mut self) {
         self.resume_status_timer_after_modal();
         self.set_composer_input_enabled(/*enabled*/ true, /*placeholder*/ None);
+        self.sync_completion_popup();
     }
 
     fn pause_status_timer_for_modal(&mut self) {
@@ -1540,6 +1598,7 @@ impl BottomPane {
 
         if updated {
             self.composer.sync_popups();
+            self.sync_completion_popup();
             self.request_redraw();
         }
     }
@@ -1651,6 +1710,22 @@ impl BottomPane {
             .render(area, buf);
     }
 
+    pub(crate) fn completion_popup_overlay_buffer(
+        &self,
+        cursor_x: u16,
+        cursor_y: u16,
+        screen_width: u16,
+        screen_height: u16,
+    ) -> Option<Buffer> {
+        self.prompt_autocomplete.overlay_buffer(
+            self.active_view().is_some(),
+            cursor_x,
+            cursor_y,
+            screen_width,
+            screen_height,
+        )
+    }
+
     pub(crate) fn desired_height_with_composer_right_reserve(
         &self,
         width: u16,
@@ -1748,6 +1823,7 @@ impl BottomPane {
     pub(crate) fn insert_recording_meter_placeholder(&mut self, text: &str) -> String {
         let id = self.composer.insert_recording_meter_placeholder(text);
         self.composer.sync_popups();
+        self.sync_completion_popup();
         self.request_redraw();
         id
     }
@@ -1756,6 +1832,7 @@ impl BottomPane {
         let updated = self.composer.update_recording_meter_in_place(id, text);
         if updated {
             self.composer.sync_popups();
+            self.sync_completion_popup();
             self.request_redraw();
         }
         updated
@@ -1764,13 +1841,14 @@ impl BottomPane {
     pub(crate) fn remove_recording_meter_placeholder(&mut self, id: &str) {
         self.composer.remove_recording_meter_placeholder(id);
         self.composer.sync_popups();
+        self.sync_completion_popup();
         self.request_redraw();
     }
 }
 
 impl Renderable for BottomPane {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.as_renderable().render(area, buf);
+        self.render_with_composer_right_reserve(area, buf, /*composer_right_reserve*/ 0);
     }
     fn desired_height(&self, width: u16) -> u16 {
         self.as_renderable().desired_height(width)
