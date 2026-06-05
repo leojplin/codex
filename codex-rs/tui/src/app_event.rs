@@ -46,8 +46,10 @@ use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::Personality;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
-use codex_realtime_webrtc::RealtimeWebrtcEvent;
-use codex_realtime_webrtc::RealtimeWebrtcSessionHandle;
+#[cfg(feature = "webrtc")]
+pub(crate) use codex_realtime_webrtc::RealtimeWebrtcEvent;
+#[cfg(feature = "webrtc")]
+pub(crate) use codex_realtime_webrtc::RealtimeWebrtcSessionHandle;
 
 use crate::history_cell::HistoryCell;
 
@@ -695,9 +697,11 @@ pub(crate) enum AppEvent {
     },
 
     /// Peer-connection lifecycle event from a TUI-owned realtime WebRTC session.
+    #[cfg_attr(not(feature = "webrtc"), allow(dead_code))]
     RealtimeWebrtcEvent(RealtimeWebrtcEvent),
 
     /// Local microphone level from a TUI-owned realtime WebRTC session.
+    #[cfg_attr(not(feature = "webrtc"), allow(dead_code))]
     RealtimeWebrtcLocalAudioLevel(u16),
 
     /// Open the reasoning selection popup after picking a model.
@@ -1052,6 +1056,34 @@ pub(crate) struct PermissionProfileSelection {
 pub(crate) struct RealtimeWebrtcOffer {
     pub(crate) offer_sdp: String,
     pub(crate) handle: RealtimeWebrtcSessionHandle,
+}
+
+#[cfg(not(feature = "webrtc"))]
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) enum RealtimeWebrtcEvent {
+    Connected,
+    Closed,
+    Failed(String),
+    LocalAudioLevel(u16),
+}
+
+#[cfg(not(feature = "webrtc"))]
+#[derive(Debug)]
+pub(crate) struct RealtimeWebrtcSessionHandle;
+
+#[cfg(not(feature = "webrtc"))]
+impl RealtimeWebrtcSessionHandle {
+    pub(crate) fn apply_answer_sdp(&self, _sdp: String) -> Result<(), String> {
+        Err("Realtime WebRTC is unavailable in this build".to_string())
+    }
+
+    pub(crate) fn close(&self) {}
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) fn local_audio_peak(&self) -> std::sync::Arc<std::sync::atomic::AtomicU16> {
+        std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0))
+    }
 }
 
 /// The exit strategy requested by the UI layer.

@@ -12,6 +12,10 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+default = ["webrtc"]
+webrtc = ["codex-tui/webrtc"]
+
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
