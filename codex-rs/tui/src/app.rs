@@ -1344,6 +1344,7 @@ See the Codex keymap documentation for supported actions and examples."
         let desired_height = self.chat_widget.desired_height(terminal_size.width);
         let mut rendered_area = Rect::default();
         let mut cursor_position = None;
+        self.invalidate_completion_overlay_viewport_rows(tui);
         if terminal_resize_reflow_enabled {
             tui.draw_with_resize_reflow(desired_height, |frame| {
                 let area = frame.area();
