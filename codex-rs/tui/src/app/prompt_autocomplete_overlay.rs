@@ -11,6 +11,17 @@ use crate::tui;
 use super::App;
 
 impl App {
+    pub(super) fn invalidate_completion_overlay_viewport_rows(&self, tui: &mut tui::Tui) {
+        let Some(rect) = self.completion_overlay_rect else {
+            return;
+        };
+
+        let viewport = tui.terminal.viewport_area;
+        if rect.y < viewport.bottom() && rect.bottom() > viewport.y {
+            tui.terminal.invalidate_viewport();
+        }
+    }
+
     pub(super) fn draw_completion_terminal_overlay(
         &mut self,
         tui: &mut tui::Tui,

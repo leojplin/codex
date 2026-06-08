@@ -224,10 +224,7 @@ impl PromptAutocomplete {
         let x = cursor_x.clamp(bounds.x, max_x.max(bounds.x));
         let min_y = bounds.y;
         let max_y = bounds.bottom().saturating_sub(height).max(bounds.y);
-        let y = cursor_y
-            .saturating_add(1)
-            .saturating_sub(height)
-            .clamp(min_y, max_y);
+        let y = cursor_y.saturating_sub(height).clamp(min_y, max_y);
         let popup_rect = Rect::new(x, y, width, height);
         let mut overlay = Buffer::empty(popup_rect);
         popup.render_ref(popup_rect, &mut overlay);
