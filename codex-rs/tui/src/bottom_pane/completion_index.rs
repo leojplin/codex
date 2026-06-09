@@ -16,6 +16,12 @@ const ENGLISH_DICTIONARY_BIGRAM_INDEX: &[u8] =
     include_bytes!("../../assets/completion/english_words_bigram_index.bin");
 const ENGLISH_DICTIONARY_PAIR_INDEX: &[u8] =
     include_bytes!("../../assets/completion/english_words_pair_index.bin");
+const KNOWN_FILE_EXTENSIONS: &[&str] = &[
+    "bash", "bazel", "c", "cc", "cfg", "conf", "cpp", "css", "csv", "cts", "go", "h", "hpp",
+    "html", "java", "js", "json", "jsx", "lock", "log", "lua", "md", "mdx", "mjs", "mts", "proto",
+    "py", "rb", "rs", "scss", "sh", "sql", "swift", "toml", "ts", "tsx", "txt", "xml", "yaml",
+    "yml", "zsh",
+];
 // Fixed records: u32 word byte offset, u8 byte length, u32 lowercase ASCII letter mask.
 const DICTIONARY_INDEX_RECORD_BYTES: usize = 9;
 const DICTIONARY_PAIR_COUNT: usize = 26 * 26;
@@ -110,6 +116,7 @@ fn candidate_view<'a>(key: &'a str, candidate: &'a CompletionCandidate) -> Candi
 #[derive(Default)]
 pub(crate) struct SessionCompletionIndex {
     candidates: HashMap<String, CompletionCandidate>,
+    prefix_keys: Vec<String>,
     next_seq: u64,
 }
 
@@ -213,6 +220,12 @@ impl SessionCompletionIndex {
             return;
         }
 
+        let insert_at = self
+            .prefix_keys
+            .binary_search_by(|probe| probe.as_str().cmp(&key))
+            .unwrap_or_else(|idx| idx);
+        self.prefix_keys.insert(insert_at, key.clone());
+
         self.candidates.insert(
             key,
             CompletionCandidate {
@@ -236,10 +249,20 @@ impl SessionCompletionIndex {
     ) -> Option<Vec<RankedMatch<'a>>> {
         let mut matches = Vec::new();
         let mut scanned = 0usize;
-        for (key, candidate) in self.candidates.iter() {
+        let start = self
+            .prefix_keys
+            .binary_search_by(|key| key.as_str().cmp(query_lower))
+            .unwrap_or_else(|idx| idx);
+        for key in self.prefix_keys[start..]
+            .iter()
+            .take_while(|key| key.starts_with(query_lower))
+        {
             if should_cancel_scan(&mut scanned, is_cancelled) {
                 return None;
             }
+            let Some(candidate) = self.candidates.get(key) else {
+                continue;
+            };
             if let Some(ranked) = rank_candidate(
                 candidate_view(key, candidate),
                 query,
@@ -835,10 +858,10 @@ fn looks_like_filename(value: &str) -> bool {
         return false;
     };
     !stem.is_empty()
-        && !extension.is_empty()
-        && extension.len() <= 12
         && stem.chars().any(char::is_alphanumeric)
-        && extension.chars().all(|ch| ch.is_ascii_alphanumeric())
+        && KNOWN_FILE_EXTENSIONS
+            .iter()
+            .any(|known| extension.eq_ignore_ascii_case(known))
 }
 
 fn basename(path: &str) -> Option<&str> {

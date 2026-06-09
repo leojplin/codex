@@ -111,11 +111,10 @@ impl PromptAutocomplete {
             return false;
         }
 
-        let needs_redraw = self.clear_popup();
         let request_id = self.search.search(key.clone());
         self.requested = Some(RequestedSearch { request_id, key });
         self.dismissed_token = None;
-        needs_redraw
+        false
     }
 
     pub(crate) fn on_search_result(
@@ -225,6 +224,15 @@ impl PromptAutocomplete {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
+                let popup_matches_context = self.popup.as_ref().is_some_and(|popup| {
+                    composer
+                        .completion_context()
+                        .is_some_and(|context| popup.matches_context(&context))
+                });
+                if !popup_matches_context {
+                    return Some(InputResult::None);
+                }
+
                 let selected = self.popup.as_ref().and_then(CompletionPopup::selected);
                 self.popup = None;
                 if let Some((range, replacement)) = selected {
@@ -238,10 +246,14 @@ impl PromptAutocomplete {
             KeyEvent {
                 code: KeyCode::Esc, ..
             } => {
-                self.dismissed_token = self
-                    .popup
-                    .as_ref()
-                    .map(|popup| popup.token_query().to_string());
+                self.dismissed_token = composer
+                    .completion_context()
+                    .map(|context| context.query)
+                    .or_else(|| {
+                        self.popup
+                            .as_ref()
+                            .map(|popup| popup.token_query().to_string())
+                    });
                 self.popup = None;
                 self.requested = None;
                 self.search.invalidate();
