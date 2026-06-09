@@ -719,6 +719,9 @@ impl App {
             AppEvent::FileSearchResult { query, matches } => {
                 self.chat_widget.apply_file_search_result(query, matches);
             }
+            AppEvent::PromptAutocompleteResult(result) => {
+                self.chat_widget.apply_prompt_autocomplete_result(result);
+            }
             AppEvent::RefreshRateLimits { origin } => {
                 self.refresh_rate_limits(app_server, origin);
             }

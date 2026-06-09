@@ -992,7 +992,7 @@ async fn patch_activity_prevents_cancelled_turn_prompt_restore() {
 }
 
 #[tokio::test]
-async fn pending_steer_esc_does_not_steal_vim_insert_escape() {
+async fn pending_steer_double_esc_does_not_steal_vim_insert_escape() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
 
@@ -1008,6 +1008,11 @@ async fn pending_steer_esc_does_not_steal_vim_insert_escape() {
 
     assert!(!chat.should_handle_vim_insert_escape(esc));
     assert_eq!(chat.input_queue.pending_steers.len(), 1);
+    assert!(!chat.input_queue.submit_pending_steers_after_interrupt);
+    assert!(op_rx.try_recv().is_err());
+
+    chat.handle_key_event(esc);
+
     assert!(!chat.input_queue.submit_pending_steers_after_interrupt);
     assert!(op_rx.try_recv().is_err());
 

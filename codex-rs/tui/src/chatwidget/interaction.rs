@@ -28,6 +28,7 @@ impl ChatWidget {
             self.bottom_pane.clear_quit_shortcut_hint();
             self.quit_shortcut_expires_at = None;
             self.quit_shortcut_key = None;
+            self.clear_interrupt_shortcut();
             return;
         }
 
@@ -37,7 +38,12 @@ impl ChatWidget {
             self.bottom_pane.clear_quit_shortcut_hint();
             self.quit_shortcut_expires_at = None;
             self.quit_shortcut_key = None;
+            self.clear_interrupt_shortcut();
             self.copy_last_agent_markdown();
+            return;
+        }
+
+        if self.handle_turn_interrupt_key_event(key_event) {
             return;
         }
 
@@ -63,6 +69,7 @@ impl ChatWidget {
                 self.bottom_pane.clear_quit_shortcut_hint();
                 self.quit_shortcut_expires_at = None;
                 self.quit_shortcut_key = None;
+                self.clear_interrupt_shortcut();
             }
             KeyEvent {
                 code: KeyCode::Char(c),
@@ -72,6 +79,7 @@ impl ChatWidget {
             } if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
                 && c.eq_ignore_ascii_case(&'v') =>
             {
+                self.clear_interrupt_shortcut();
                 match paste_image_to_temp_png() {
                     Ok((path, info)) => {
                         tracing::debug!(
@@ -95,6 +103,7 @@ impl ChatWidget {
                 self.bottom_pane.clear_quit_shortcut_hint();
                 self.quit_shortcut_expires_at = None;
                 self.quit_shortcut_key = None;
+                self.clear_interrupt_shortcut();
             }
             _ => {}
         }
@@ -127,6 +136,7 @@ impl ChatWidget {
         }
 
         if self.chat_keymap.interrupt_turn.is_pressed(key_event)
+            && !Self::is_plain_esc_press_or_repeat(key_event)
             && !self.input_queue.pending_steers.is_empty()
             && self.bottom_pane.is_task_running()
             && self.bottom_pane.no_modal_or_popup_active()
@@ -235,6 +245,73 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_error_event(message));
         self.request_redraw();
         false
+    }
+
+    fn handle_turn_interrupt_key_event(&mut self, key_event: KeyEvent) -> bool {
+        if !Self::is_plain_esc_press_or_repeat(key_event) {
+            return false;
+        }
+
+        let pending_steer_interrupt = self.chat_keymap.interrupt_turn.is_pressed(key_event)
+            && !self.input_queue.pending_steers.is_empty()
+            && self.bottom_pane.is_task_running()
+            && self.bottom_pane.no_modal_or_popup_active()
+            && !self.should_handle_vim_insert_escape(key_event);
+        let running_task_interrupt = self.bottom_pane.should_interrupt_task_for_key(key_event);
+
+        if !pending_steer_interrupt && !running_task_interrupt {
+            return false;
+        }
+
+        if matches!(
+            key_event,
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Repeat,
+                ..
+            }
+        ) {
+            return true;
+        }
+
+        let key = KeyBinding::from_event(key_event);
+        if matches!(
+            key_event,
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                ..
+            }
+        ) && !self.interrupt_shortcut_active_for(key)
+        {
+            self.arm_interrupt_shortcut(key);
+            return true;
+        }
+
+        self.clear_interrupt_shortcut();
+        if pending_steer_interrupt {
+            self.input_queue.submit_pending_steers_after_interrupt = true;
+            if !self.submit_op(AppCommand::interrupt()) {
+                self.input_queue.submit_pending_steers_after_interrupt = false;
+            }
+        } else {
+            self.submit_op(AppCommand::interrupt_and_restore_prompt_if_no_output());
+        }
+        true
+    }
+
+    fn is_plain_esc_press_or_repeat(key_event: KeyEvent) -> bool {
+        matches!(
+            key_event,
+            KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                ..
+            }
+        )
     }
 
     /// Copy the last agent response (raw markdown) to the system clipboard.
@@ -362,6 +439,7 @@ impl ChatWidget {
     /// expiry requests a shutdown-first quit.
     fn on_ctrl_c(&mut self) {
         let key = key_hint::ctrl(KeyCode::Char('c'));
+        self.clear_interrupt_shortcut();
         if self.realtime_conversation.is_live() {
             self.bottom_pane.clear_quit_shortcut_hint();
             self.quit_shortcut_expires_at = None;
@@ -417,6 +495,7 @@ impl ChatWidget {
     /// Otherwise it should be routed to the active view and not attempt to quit.
     fn on_ctrl_d(&mut self) -> bool {
         let key = key_hint::ctrl(KeyCode::Char('d'));
+        self.clear_interrupt_shortcut();
         if !DOUBLE_PRESS_QUIT_SHORTCUT_ENABLED {
             if !self.bottom_pane.composer_is_empty() || !self.bottom_pane.no_modal_or_popup_active()
             {
@@ -440,6 +519,30 @@ impl ChatWidget {
 
         self.arm_quit_shortcut(key);
         true
+    }
+
+    fn interrupt_shortcut_active_for(&self, key: KeyBinding) -> bool {
+        self.interrupt_shortcut_key == Some(key)
+            && self
+                .interrupt_shortcut_expires_at
+                .is_some_and(|expires_at| Instant::now() < expires_at)
+    }
+
+    fn arm_interrupt_shortcut(&mut self, key: KeyBinding) {
+        self.interrupt_shortcut_expires_at = Instant::now()
+            .checked_add(INTERRUPT_SHORTCUT_TIMEOUT)
+            .or_else(|| Some(Instant::now()));
+        self.interrupt_shortcut_key = Some(key);
+        self.bottom_pane.show_interrupt_shortcut_hint(key);
+    }
+
+    pub(super) fn clear_interrupt_shortcut(&mut self) {
+        let had_expires_at = self.interrupt_shortcut_expires_at.take().is_some();
+        let had_key = self.interrupt_shortcut_key.take().is_some();
+        let had_shortcut = had_expires_at || had_key;
+        if had_shortcut {
+            self.bottom_pane.clear_interrupt_shortcut_hint();
+        }
     }
 
     /// True if `key` matches the armed quit shortcut and the window has not expired.

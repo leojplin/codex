@@ -11,9 +11,14 @@ impl ChatWidget {
     /// The bottom pane only has one running flag, but this module treats it as a derived state of
     /// both the agent turn lifecycle and MCP startup lifecycle.
     pub(super) fn update_task_running_state(&mut self) {
-        self.bottom_pane.set_task_running(
-            self.turn_lifecycle.agent_turn_running || self.mcp_startup_status.is_some(),
-        );
+        let is_task_running =
+            self.turn_lifecycle.agent_turn_running || self.mcp_startup_status.is_some();
+        self.bottom_pane.set_task_running(is_task_running);
+        self.bottom_pane
+            .set_slash_commands_blocked_by_task(self.turn_lifecycle.agent_turn_running);
+        if !is_task_running {
+            self.clear_interrupt_shortcut();
+        }
         self.refresh_plan_mode_nudge();
         self.refresh_status_surfaces();
     }
@@ -57,6 +62,7 @@ impl ChatWidget {
         self.bottom_pane.clear_quit_shortcut_hint();
         self.quit_shortcut_expires_at = None;
         self.quit_shortcut_key = None;
+        self.clear_interrupt_shortcut();
         self.update_task_running_state();
         self.status_state.retry_status_header = None;
         self.clear_active_hook_cell();

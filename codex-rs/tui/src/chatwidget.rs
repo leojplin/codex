@@ -18,9 +18,10 @@
 //!
 //! The bottom pane exposes a single "task running" indicator that drives the spinner and interrupt
 //! hints. This module treats that indicator as derived UI-busy state: it is set while an agent turn
-//! is in progress and while MCP server startup is in progress. Those lifecycles are tracked
-//! independently (`agent_turn_running` and `mcp_startup_status`) and synchronized via
-//! `update_task_running_state`.
+//! is in progress and while MCP server startup is in progress. Slash-command gating uses the agent
+//! turn state separately so MCP startup can keep showing progress without disabling local commands.
+//! Those lifecycles are tracked independently (`agent_turn_running` and `mcp_startup_status`) and
+//! synchronized via `update_task_running_state`.
 //!
 //! For preamble-capable models, assistant output may include commentary before
 //! the final answer. During streaming we hide the status row to avoid duplicate
@@ -279,11 +280,13 @@ use crate::bottom_pane::ExperimentalFeatureItem;
 use crate::bottom_pane::ExperimentalFeaturesView;
 use crate::bottom_pane::GoalStatusIndicator;
 use crate::bottom_pane::HistoryEntry;
+use crate::bottom_pane::INTERRUPT_SHORTCUT_TIMEOUT;
 use crate::bottom_pane::InputResult;
 use crate::bottom_pane::LocalImageAttachment;
 use crate::bottom_pane::McpServerElicitationFormRequest;
 use crate::bottom_pane::MemoriesSettingsView;
 use crate::bottom_pane::MentionBinding;
+use crate::bottom_pane::PromptAutocompleteResult;
 use crate::bottom_pane::QUIT_SHORTCUT_TIMEOUT;
 use crate::bottom_pane::QueuedInputAction;
 use crate::bottom_pane::SelectionAction;
@@ -662,6 +665,11 @@ pub(crate) struct ChatWidget {
     /// We require the second press to match this key so `Ctrl+C` followed by
     /// `Ctrl+D` (or vice versa) doesn't quit accidentally.
     quit_shortcut_key: Option<KeyBinding>,
+    /// When `Some`, plain Esc has been pressed once for a running-turn interrupt
+    /// and must be pressed again before this deadline.
+    interrupt_shortcut_expires_at: Option<Instant>,
+    /// Tracks which interrupt shortcut key was pressed first.
+    interrupt_shortcut_key: Option<KeyBinding>,
     // Runtime metrics accumulated across delta snapshots for the active turn.
     turn_runtime_metrics: RuntimeMetricsSummary,
     last_rendered_width: std::cell::Cell<Option<usize>>,
@@ -1594,6 +1602,11 @@ impl ChatWidget {
     /// Forward file-search results to the bottom pane.
     pub(crate) fn apply_file_search_result(&mut self, query: String, matches: Vec<FileMatch>) {
         self.bottom_pane.on_file_search_result(query, matches);
+    }
+
+    /// Forward prompt-autocomplete results to the bottom pane.
+    pub(crate) fn apply_prompt_autocomplete_result(&mut self, result: PromptAutocompleteResult) {
+        self.bottom_pane.on_prompt_autocomplete_result(result);
     }
 
     /// Return the markdown body width available to an active stream.

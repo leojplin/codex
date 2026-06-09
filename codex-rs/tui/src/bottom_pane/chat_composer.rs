@@ -353,6 +353,7 @@ pub(crate) struct ChatComposer {
     attachments: AttachmentState,
     placeholder_text: String,
     is_task_running: bool,
+    slash_commands_blocked_by_task: bool,
     queue_submissions: bool,
     /// Slash-command draft staged for local recall after application-level dispatch.
     ///
@@ -532,6 +533,7 @@ impl ChatComposer {
             attachments: AttachmentState::default(),
             placeholder_text,
             is_task_running: false,
+            slash_commands_blocked_by_task: false,
             queue_submissions: false,
             pending_slash_command_history: None,
             #[cfg(not(target_os = "linux"))]
@@ -1199,9 +1201,12 @@ impl ChatComposer {
         urls
     }
 
-    #[cfg(test)]
     pub(crate) fn show_footer_flash(&mut self, line: Line<'static>, duration: Duration) {
         self.footer.show_flash(line, duration);
+    }
+
+    pub(crate) fn clear_footer_flash(&mut self) {
+        self.footer.clear_flash();
     }
 
     /// Replace the entire composer content with `text` and reset cursor.
@@ -3010,7 +3015,7 @@ impl ChatComposer {
     }
 
     fn reject_slash_command_if_unavailable(&self, command: &SlashCommandItem) -> bool {
-        if !self.is_task_running || command.available_during_task() {
+        if !self.slash_commands_blocked_by_task || command.available_during_task() {
             return false;
         }
         let message = format!(
@@ -3927,6 +3932,11 @@ impl ChatComposer {
 
     pub fn set_task_running(&mut self, running: bool) {
         self.is_task_running = running;
+        self.slash_commands_blocked_by_task = running;
+    }
+
+    pub(crate) fn set_slash_commands_blocked_by_task(&mut self, blocked: bool) {
+        self.slash_commands_blocked_by_task = blocked;
     }
 
     pub(crate) fn set_queue_submissions(&mut self, queue_submissions: bool) {

@@ -36,6 +36,11 @@ const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
 
 impl ChatWidget {
+    fn slash_commands_blocked_by_task(&self) -> bool {
+        self.turn_lifecycle.agent_turn_running
+            || (self.bottom_pane.is_task_running() && self.mcp_startup_status.is_none())
+    }
+
     /// Dispatch a bare slash command and record its staged local-history entry.
     ///
     /// The composer stages history before returning `InputResult::Command`; this wrapper commits
@@ -135,7 +140,7 @@ impl ChatWidget {
         if !self.ensure_side_command_allowed_outside_review(cmd) {
             return;
         }
-        if !cmd.available_during_task() && self.bottom_pane.is_task_running() {
+        if !cmd.available_during_task() && self.slash_commands_blocked_by_task() {
             let message = format!(
                 "'/{}' is disabled while a task is in progress.",
                 cmd.command()
@@ -553,7 +558,7 @@ impl ChatWidget {
             self.dispatch_command(cmd);
             return;
         }
-        if !cmd.available_during_task() && self.bottom_pane.is_task_running() {
+        if !cmd.available_during_task() && self.slash_commands_blocked_by_task() {
             let message = format!(
                 "'/{}' is disabled while a task is in progress.",
                 cmd.command()

@@ -170,6 +170,16 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
             });
             LOGGER.write_json_line(value);
         }
+        AppEvent::PromptAutocompleteResult(result) => {
+            let value = json!({
+                "ts": now_ts(),
+                "dir": "to_tui",
+                "kind": "prompt_autocomplete_result",
+                "query": &result.query,
+                "matches": result.matches.len(),
+            });
+            LOGGER.write_json_line(value);
+        }
         AppEvent::PetPreviewLoaded { request_id, result } => {
             let value = json!({
                 "ts": now_ts(),
