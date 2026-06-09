@@ -106,8 +106,8 @@ impl ChatWidget {
         );
 
         let mut widget = Self {
-            app_event_tx: app_event_tx.clone(),
-            frame_requester: frame_requester.clone(),
+            app_event_tx,
+            frame_requester,
             codex_op_target,
             bottom_pane,
             transcript: TranscriptState::new(active_cell),
@@ -198,6 +198,8 @@ impl ChatWidget {
             pending_notification: None,
             quit_shortcut_expires_at: None,
             quit_shortcut_key: None,
+            interrupt_shortcut_expires_at: None,
+            interrupt_shortcut_key: None,
             turn_runtime_metrics: RuntimeMetricsSummary::default(),
             last_rendered_width: std::cell::Cell::new(None),
             feedback,

@@ -47,6 +47,7 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Stylize;
 use ratatui::text::Line;
 use std::time::Duration;
 use std::time::Instant;
@@ -162,6 +163,7 @@ pub(crate) use selection_tabs::SelectionTab;
 ///
 /// Keeping a single value ensures Ctrl+C and Ctrl+D behave identically.
 pub(crate) const QUIT_SHORTCUT_TIMEOUT: Duration = Duration::from_secs(1);
+pub(crate) const INTERRUPT_SHORTCUT_TIMEOUT: Duration = Duration::from_secs(1);
 
 const APPROVAL_PROMPT_TYPING_IDLE_DELAY: Duration = Duration::from_secs(1);
 
@@ -190,6 +192,7 @@ pub(crate) use chat_composer::InputResult;
 pub(crate) use chat_composer::QueuedInputAction;
 pub(crate) use chat_composer_history::HistoryEntry;
 use prompt_autocomplete::PromptAutocomplete;
+pub(crate) use prompt_autocomplete::PromptAutocompleteResult;
 
 use crate::status_indicator_widget::StatusDetailsCapitalization;
 use crate::status_indicator_widget::StatusIndicatorWidget;
@@ -282,7 +285,7 @@ impl BottomPane {
         composer.set_skill_mentions(skills);
         Self {
             composer,
-            prompt_autocomplete: PromptAutocomplete::default(),
+            prompt_autocomplete: PromptAutocomplete::new(app_event_tx.clone()),
             view_stack: Vec::new(),
             delayed_approval_requests: VecDeque::new(),
             last_composer_activity_at: None,
@@ -640,21 +643,10 @@ impl BottomPane {
             self.request_redraw();
             InputResult::None
         } else {
-            let is_agent_command = self
-                .composer_text()
-                .lines()
-                .next()
-                .and_then(parse_slash_name)
-                .is_some_and(|(name, _, _)| name == "agent");
-
             // If a task is running and a status line is visible, allow the
             // configured action to interrupt even while the composer has focus.
             // When a popup is active, prefer dismissing it over interrupting the task.
-            if self.keymap.chat.interrupt_turn.is_pressed(key_event)
-                && self.is_task_running
-                && !(is_agent_command && key_event.code == KeyCode::Esc)
-                && !self.popup_active()
-                && !self.composer_should_handle_vim_insert_escape(key_event)
+            if self.should_interrupt_task_for_key(key_event)
                 && let Some(status) = &self.status
             {
                 // Send Op::Interrupt
@@ -986,21 +978,25 @@ impl BottomPane {
 
         self.composer
             .show_quit_shortcut_hint(key, self.has_input_focus);
+        self.schedule_footer_hint_expiry(QUIT_SHORTCUT_TIMEOUT);
+        self.request_redraw();
+    }
+
+    fn schedule_footer_hint_expiry(&self, timeout: Duration) {
         let frame_requester = self.frame_requester.clone();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
-                tokio::time::sleep(QUIT_SHORTCUT_TIMEOUT).await;
+                tokio::time::sleep(timeout).await;
                 frame_requester.schedule_frame();
             });
         } else {
             // In tests (and other non-Tokio contexts), fall back to a thread so
             // the hint can still expire without requiring an explicit draw.
             std::thread::spawn(move || {
-                std::thread::sleep(QUIT_SHORTCUT_TIMEOUT);
+                std::thread::sleep(timeout);
                 frame_requester.schedule_frame();
             });
         }
-        self.request_redraw();
     }
 
     /// Clear the "press again to quit" hint immediately.
@@ -1012,6 +1008,20 @@ impl BottomPane {
     #[cfg(test)]
     pub(crate) fn quit_shortcut_hint_visible(&self) -> bool {
         self.composer.quit_shortcut_hint_visible()
+    }
+
+    pub(crate) fn show_interrupt_shortcut_hint(&mut self, key: KeyBinding) {
+        self.composer.show_footer_flash(
+            Line::from(vec![key.into(), " again to interrupt".into()]).dim(),
+            INTERRUPT_SHORTCUT_TIMEOUT,
+        );
+        self.schedule_footer_hint_expiry(INTERRUPT_SHORTCUT_TIMEOUT);
+        self.request_redraw();
+    }
+
+    pub(crate) fn clear_interrupt_shortcut_hint(&mut self) {
+        self.composer.clear_footer_flash();
+        self.request_redraw();
     }
 
     #[cfg(test)]
@@ -1065,6 +1075,10 @@ impl BottomPane {
             // Hide the status indicator when a task completes, but keep other modal views.
             self.hide_status_indicator();
         }
+    }
+
+    pub(crate) fn set_slash_commands_blocked_by_task(&mut self, blocked: bool) {
+        self.composer.set_slash_commands_blocked_by_task(blocked);
     }
 
     pub(crate) fn set_queue_submissions(&mut self, queue_submissions: bool) {
@@ -1291,6 +1305,23 @@ impl BottomPane {
 
     pub(crate) fn is_task_running(&self) -> bool {
         self.is_task_running
+    }
+
+    pub(crate) fn should_interrupt_task_for_key(&self, key_event: KeyEvent) -> bool {
+        let is_agent_command = self
+            .composer_text()
+            .lines()
+            .next()
+            .and_then(parse_slash_name)
+            .is_some_and(|(name, _, _)| name == "agent");
+
+        self.keymap.chat.interrupt_turn.is_pressed(key_event)
+            && self.is_task_running
+            && self.view_stack.is_empty()
+            && !(is_agent_command && key_event.code == KeyCode::Esc)
+            && !self.popup_active()
+            && !self.composer_should_handle_vim_insert_escape(key_event)
+            && self.status.is_some()
     }
 
     pub(crate) fn terminal_title_requires_action(&self) -> bool {
@@ -1612,6 +1643,16 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    pub(crate) fn on_prompt_autocomplete_result(&mut self, result: PromptAutocompleteResult) {
+        if self.prompt_autocomplete.on_search_result(
+            result,
+            &self.composer,
+            !self.view_stack.is_empty() || self.composer.popup_active(),
+        ) {
+            self.request_redraw();
+        }
+    }
+
     pub(crate) fn attach_image(&mut self, path: PathBuf) {
         if self.view_stack.is_empty() {
             self.composer.attach_image(path);
@@ -1868,6 +1909,7 @@ mod tests {
     use crate::app::app_server_requests::ResolvedAppServerRequest;
     use crate::app_command::AppCommand as Op;
     use crate::app_event::AppEvent;
+    use crate::history_cell::PlainHistoryCell;
     use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
     use crate::status_indicator_widget::StatusDetailsCapitalization;
     use crate::test_support::PathBufExt;
@@ -1883,7 +1925,10 @@ mod tests {
     use ratatui::layout::Rect;
     use std::cell::Cell;
     use std::rc::Rc;
+    use std::thread::sleep;
     use std::time::Instant;
+    use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::mpsc::error::TryRecvError;
     use tokio::sync::mpsc::unbounded_channel;
 
     fn snapshot_buffer(buf: &Buffer) -> String {
@@ -1922,6 +1967,69 @@ mod tests {
             animations_enabled: true,
             skills: Some(Vec::new()),
         })
+    }
+
+    fn wait_for_prompt_autocomplete_result(
+        rx: &mut UnboundedReceiver<AppEvent>,
+    ) -> PromptAutocompleteResult {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match rx.try_recv() {
+                Ok(AppEvent::PromptAutocompleteResult(result)) => return result,
+                Ok(_) => {}
+                Err(TryRecvError::Empty) if Instant::now() < deadline => {
+                    sleep(Duration::from_millis(10));
+                }
+                Err(TryRecvError::Empty) => {
+                    panic!("timed out waiting for prompt autocomplete result");
+                }
+                Err(TryRecvError::Disconnected) => {
+                    panic!("app event channel closed while waiting for prompt autocomplete result");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prompt_autocomplete_applies_async_result_when_ready() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane(tx);
+        let cell = PlainHistoryCell::new(vec![Line::from("asynchronous_completion")]);
+
+        pane.ingest_completion_history_cell(&cell);
+        pane.insert_str("asyn");
+
+        assert!(!pane.prompt_autocomplete.popup_active());
+        let result = wait_for_prompt_autocomplete_result(&mut rx);
+        assert_eq!(result.query, "asyn");
+
+        pane.on_prompt_autocomplete_result(result);
+
+        assert!(pane.prompt_autocomplete.popup_active());
+    }
+
+    #[test]
+    fn prompt_autocomplete_ignores_stale_async_result() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane(tx);
+        let cell = PlainHistoryCell::new(vec![Line::from("asynchronous_completion")]);
+
+        pane.ingest_completion_history_cell(&cell);
+        pane.insert_str("as");
+        let stale_result = wait_for_prompt_autocomplete_result(&mut rx);
+        assert_eq!(stale_result.query, "as");
+
+        pane.insert_str("y");
+        pane.on_prompt_autocomplete_result(stale_result);
+        assert!(!pane.prompt_autocomplete.popup_active());
+
+        let latest_result = wait_for_prompt_autocomplete_result(&mut rx);
+        assert_eq!(latest_result.query, "asy");
+        pane.on_prompt_autocomplete_result(latest_result);
+
+        assert!(pane.prompt_autocomplete.popup_active());
     }
 
     fn exec_request() -> ApprovalRequest {

@@ -22,7 +22,11 @@ const DICTIONARY_PAIR_COUNT: usize = 26 * 26;
 const DICTIONARY_PAIR_RECORD_BYTES: usize = 8;
 const DICTIONARY_PAIR_HEADER_BYTES: usize = DICTIONARY_PAIR_COUNT * DICTIONARY_PAIR_RECORD_BYTES;
 
-const _: () = assert!(ENGLISH_DICTIONARY_INDEX.len() % DICTIONARY_INDEX_RECORD_BYTES == 0);
+const _: () = assert!(
+    ENGLISH_DICTIONARY_INDEX
+        .len()
+        .is_multiple_of(DICTIONARY_INDEX_RECORD_BYTES)
+);
 const _: () = assert!(ENGLISH_DICTIONARY_BIGRAM_INDEX.len() >= DICTIONARY_PAIR_HEADER_BYTES);
 const _: () = assert!(ENGLISH_DICTIONARY_PAIR_INDEX.len() >= DICTIONARY_PAIR_HEADER_BYTES);
 
@@ -124,24 +128,45 @@ impl SessionCompletionIndex {
         self.search_with_dictionary(query, true)
     }
 
+    #[cfg(test)]
     pub(crate) fn search_with_dictionary(
         &self,
         query: &str,
         include_dictionary: bool,
     ) -> Vec<CompletionMatch> {
+        let never_cancelled = || false;
+        self.search_with_dictionary_cancellable(query, include_dictionary, &never_cancelled)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn search_with_dictionary_cancellable(
+        &self,
+        query: &str,
+        include_dictionary: bool,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<CompletionMatch>> {
         if query.chars().count() < MIN_COMPLETION_QUERY_CHARS {
-            return Vec::new();
+            return Some(Vec::new());
+        }
+
+        if is_cancelled() {
+            return None;
         }
 
         let query_lower = normalize(query);
-        let mut session_matches =
-            self.session_literal_matches(query, &query_lower, MAX_COMPLETION_RESULTS);
+        let mut session_matches = self.session_literal_matches(
+            query,
+            &query_lower,
+            MAX_COMPLETION_RESULTS,
+            is_cancelled,
+        )?;
         if session_matches.len() < MAX_COMPLETION_RESULTS {
             session_matches.extend(self.session_fuzzy_matches(
                 query,
                 &query_lower,
                 MAX_COMPLETION_RESULTS - session_matches.len(),
-            ));
+                is_cancelled,
+            )?);
         }
 
         let mut results = session_matches
@@ -152,10 +177,10 @@ impl SessionCompletionIndex {
 
         let remaining = MAX_COMPLETION_RESULTS.saturating_sub(results.len());
         if include_dictionary && remaining > 0 {
-            results.extend(self.search_dictionary(query, &query_lower, remaining));
+            results.extend(self.search_dictionary(query, &query_lower, remaining, is_cancelled)?);
         }
 
-        results
+        Some(results)
     }
 
     #[cfg(test)]
@@ -210,9 +235,14 @@ impl SessionCompletionIndex {
         query: &str,
         query_lower: &str,
         limit: usize,
-    ) -> Vec<RankedMatch<'a>> {
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<RankedMatch<'a>>> {
         let mut matches = Vec::new();
+        let mut scanned = 0usize;
         for (key, candidate) in self.candidates.iter() {
+            if should_cancel_scan(&mut scanned, is_cancelled) {
+                return None;
+            }
             if let Some(ranked) = rank_candidate(
                 candidate_view(key, candidate),
                 query,
@@ -222,7 +252,7 @@ impl SessionCompletionIndex {
                 push_top_ranked_match(&mut matches, ranked, limit);
             }
         }
-        matches
+        Some(matches)
     }
 
     fn session_fuzzy_matches<'a>(
@@ -230,34 +260,42 @@ impl SessionCompletionIndex {
         query: &str,
         query_lower: &str,
         limit: usize,
-    ) -> Vec<RankedMatch<'a>> {
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<RankedMatch<'a>>> {
         if limit == 0 {
-            return Vec::new();
+            return Some(Vec::new());
         }
 
         if !query_lower.is_ascii() {
-            return self.session_legacy_fuzzy_matches(query, query_lower, false, limit);
+            return self.session_legacy_fuzzy_matches(
+                query,
+                query_lower,
+                false,
+                limit,
+                is_cancelled,
+            );
         }
 
         let max_typos = completion_max_typos(query_lower);
         let min_len = query_lower.len().saturating_sub(max_typos as usize);
         let query_mask = ascii_char_mask(query_lower);
         let allowed_missing_chars = u32::from(max_typos);
-        let candidates = self
-            .candidates
-            .iter()
-            .filter_map(|(key, candidate)| {
-                let view = candidate_view(key, candidate);
-                if !view.key_is_ascii
-                    || has_literal_match(view.key, query_lower)
-                    || view.key_byte_len < min_len
-                    || missing_ascii_chars(view.key_ascii_mask, query_mask) > allowed_missing_chars
-                {
-                    return None;
-                }
-                Some(view)
-            })
-            .collect::<Vec<_>>();
+        let mut candidates = Vec::new();
+        let mut scanned = 0usize;
+        for (key, candidate) in self.candidates.iter() {
+            if should_cancel_scan(&mut scanned, is_cancelled) {
+                return None;
+            }
+            let view = candidate_view(key, candidate);
+            if !view.key_is_ascii
+                || has_literal_match(view.key, query_lower)
+                || view.key_byte_len < min_len
+                || missing_ascii_chars(view.key_ascii_mask, query_mask) > allowed_missing_chars
+            {
+                continue;
+            }
+            candidates.push(view);
+        }
 
         let config = FrizbeeConfig {
             max_typos: Some(max_typos),
@@ -267,7 +305,11 @@ impl SessionCompletionIndex {
 
         let mut matches = Vec::new();
         let mut matcher = FrizbeeMatcher::new(query_lower, &config);
+        let mut scanned = 0usize;
         for matched in matcher.match_iter(candidates.as_slice()) {
+            if should_cancel_scan(&mut scanned, is_cancelled) {
+                return None;
+            }
             push_top_ranked_match(
                 &mut matches,
                 RankedMatch {
@@ -279,10 +321,12 @@ impl SessionCompletionIndex {
                 limit,
             );
         }
-        for ranked in self.session_legacy_fuzzy_matches(query, query_lower, true, limit) {
+        for ranked in
+            self.session_legacy_fuzzy_matches(query, query_lower, true, limit, is_cancelled)?
+        {
             push_top_ranked_match(&mut matches, ranked, limit);
         }
-        matches
+        Some(matches)
     }
 
     fn session_legacy_fuzzy_matches<'a>(
@@ -291,9 +335,14 @@ impl SessionCompletionIndex {
         query_lower: &str,
         only_non_ascii: bool,
         limit: usize,
-    ) -> Vec<RankedMatch<'a>> {
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<RankedMatch<'a>>> {
         let mut matches = Vec::new();
+        let mut scanned = 0usize;
         for (key, candidate) in self.candidates.iter() {
+            if should_cancel_scan(&mut scanned, is_cancelled) {
+                return None;
+            }
             let view = candidate_view(key, candidate);
             if has_literal_match(view.key, query_lower) || (only_non_ascii && view.key_is_ascii) {
                 continue;
@@ -305,7 +354,7 @@ impl SessionCompletionIndex {
                 push_top_ranked_match(&mut matches, ranked, limit);
             }
         }
-        matches
+        Some(matches)
     }
 
     fn search_dictionary(
@@ -313,22 +362,28 @@ impl SessionCompletionIndex {
         query: &str,
         query_lower: &str,
         limit: usize,
-    ) -> Vec<CompletionMatch> {
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<CompletionMatch>> {
         if !query_lower.is_ascii() {
-            return Vec::new();
+            return Some(Vec::new());
         }
 
-        let mut matches = self.dictionary_literal_matches(query, query_lower, limit);
+        let mut matches =
+            self.dictionary_literal_matches(query, query_lower, limit, is_cancelled)?;
         if matches.len() < limit {
-            for ranked in self.dictionary_fuzzy_matches(query_lower, limit - matches.len()) {
+            for ranked in
+                self.dictionary_fuzzy_matches(query_lower, limit - matches.len(), is_cancelled)?
+            {
                 push_top_dictionary_match(&mut matches, ranked, limit);
             }
         }
-        matches
-            .into_iter()
-            .take(limit)
-            .map(|ranked| dictionary_match_to_completion_match(ranked, query_lower))
-            .collect()
+        Some(
+            matches
+                .into_iter()
+                .take(limit)
+                .map(|ranked| dictionary_match_to_completion_match(ranked, query_lower))
+                .collect(),
+        )
     }
 
     fn dictionary_literal_matches(
@@ -336,13 +391,18 @@ impl SessionCompletionIndex {
         query: &str,
         query_lower: &str,
         limit: usize,
-    ) -> Vec<DictionaryRankedMatch> {
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<DictionaryRankedMatch>> {
         let Some(pair) = rarest_query_pair(query_lower, ENGLISH_DICTIONARY_BIGRAM_INDEX) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
 
         let mut matches = Vec::new();
+        let mut scanned = 0usize;
         for word_id in dictionary_pair_word_ids(ENGLISH_DICTIONARY_BIGRAM_INDEX, pair) {
+            if should_cancel_scan(&mut scanned, is_cancelled) {
+                return None;
+            }
             let record = dictionary_record_at(word_id);
             if self.candidates.contains_key(record.text) {
                 continue;
@@ -396,39 +456,47 @@ impl SessionCompletionIndex {
                 );
             }
         }
-        matches
+        Some(matches)
     }
 
     fn dictionary_fuzzy_matches(
         &self,
         query_lower: &str,
         limit: usize,
-    ) -> Vec<DictionaryRankedMatch> {
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<DictionaryRankedMatch>> {
         if limit == 0 || query_lower.len() < 4 {
-            return Vec::new();
+            return Some(Vec::new());
         }
 
         let Some(pair) = rarest_query_pair(query_lower, ENGLISH_DICTIONARY_PAIR_INDEX) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
 
         let max_typos = dictionary_max_typos(query_lower);
         let min_len = query_lower.len().saturating_sub(max_typos as usize);
         let query_mask = ascii_letter_mask(query_lower);
         let allowed_missing_letters = u32::from(max_typos);
-        let candidates = dictionary_pair_word_ids(ENGLISH_DICTIONARY_PAIR_INDEX, pair)
-            .map(dictionary_record_at)
-            .filter(|record| !self.candidates.contains_key(record.text))
-            .filter(|record| !dictionary_has_literal_match(record.text, query_lower))
-            .filter(|record| record.byte_len >= min_len)
-            .filter(|record| {
-                missing_ascii_letters(record.letter_mask, query_mask) <= allowed_missing_letters
-            })
-            .map(|record| record.text)
-            .collect::<Vec<_>>();
+        let mut candidates = Vec::new();
+        let mut scanned = 0usize;
+        for record in
+            dictionary_pair_word_ids(ENGLISH_DICTIONARY_PAIR_INDEX, pair).map(dictionary_record_at)
+        {
+            if should_cancel_scan(&mut scanned, is_cancelled) {
+                return None;
+            }
+            if self.candidates.contains_key(record.text)
+                || dictionary_has_literal_match(record.text, query_lower)
+                || record.byte_len < min_len
+                || missing_ascii_letters(record.letter_mask, query_mask) > allowed_missing_letters
+            {
+                continue;
+            }
+            candidates.push(record.text);
+        }
 
         if candidates.is_empty() {
-            return Vec::new();
+            return Some(Vec::new());
         }
 
         let config = FrizbeeConfig {
@@ -439,7 +507,11 @@ impl SessionCompletionIndex {
 
         let mut matches = Vec::new();
         let mut matcher = FrizbeeMatcher::new(query_lower, &config);
+        let mut scanned = 0usize;
         for matched in matcher.match_iter(candidates.as_slice()) {
+            if should_cancel_scan(&mut scanned, is_cancelled) {
+                return None;
+            }
             push_top_dictionary_match(
                 &mut matches,
                 DictionaryRankedMatch {
@@ -451,8 +523,13 @@ impl SessionCompletionIndex {
                 limit,
             );
         }
-        matches
+        Some(matches)
     }
+}
+
+fn should_cancel_scan(scanned: &mut usize, is_cancelled: &dyn Fn() -> bool) -> bool {
+    *scanned = scanned.saturating_add(1);
+    (*scanned).is_multiple_of(128) && is_cancelled()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -536,7 +613,7 @@ fn rank_candidate<'a>(
         return None;
     }
 
-    let (indices, score) = fuzzy_match(&candidate.text, query)?;
+    let (indices, score) = fuzzy_match(candidate.text, query)?;
     Some(RankedMatch {
         candidate,
         match_class: MatchClass::Fuzzy,
@@ -558,7 +635,7 @@ fn compare_ranked_matches(left: &RankedMatch<'_>, right: &RankedMatch<'_>) -> st
         })
         .then_with(|| right.candidate.frequency.cmp(&left.candidate.frequency))
         .then_with(|| left.candidate.text.len().cmp(&right.candidate.text.len()))
-        .then_with(|| left.candidate.text.cmp(&right.candidate.text))
+        .then_with(|| left.candidate.text.cmp(right.candidate.text))
 }
 
 fn push_top_ranked_match<'a>(
@@ -597,7 +674,7 @@ fn compare_dictionary_matches(
         .cmp(&right.match_class)
         .then_with(|| left.fuzzy_score.cmp(&right.fuzzy_score))
         .then_with(|| left.text.len().cmp(&right.text.len()))
-        .then_with(|| left.text.cmp(&right.text))
+        .then_with(|| left.text.cmp(right.text))
 }
 
 fn push_top_dictionary_match(
@@ -750,7 +827,7 @@ fn looks_like_path(value: &str) -> bool {
         return false;
     }
     let has_separator = value.contains('/') || value.contains('\\');
-    has_separator && value.chars().any(|ch| ch.is_alphanumeric())
+    has_separator && value.chars().any(char::is_alphanumeric)
 }
 
 fn looks_like_filename(value: &str) -> bool {
@@ -764,7 +841,7 @@ fn looks_like_filename(value: &str) -> bool {
     !stem.is_empty()
         && !extension.is_empty()
         && extension.len() <= 12
-        && stem.chars().any(|ch| ch.is_alphanumeric())
+        && stem.chars().any(char::is_alphanumeric)
         && extension.chars().all(|ch| ch.is_ascii_alphanumeric())
 }
 

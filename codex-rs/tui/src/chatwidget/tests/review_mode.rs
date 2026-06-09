@@ -810,6 +810,8 @@ async fn esc_interrupt_sends_all_pending_steers_immediately_and_keeps_existing_d
         .set_composer_text("still editing".to_string(), Vec::new(), Vec::new());
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     next_interrupt_op(&mut op_rx);
 
     chat.on_interrupted_turn(TurnAbortReason::Interrupted);
@@ -862,6 +864,8 @@ async fn esc_with_pending_steers_overrides_agent_command_interrupt_behavior() {
 
     chat.bottom_pane
         .set_composer_text("/agent ".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
 
     next_interrupt_op(&mut op_rx);

@@ -35,6 +35,7 @@ use codex_utils_approval_presets::ApprovalPreset;
 use crate::app_command::AppCommand;
 use crate::app_server_session::AppServerStartedThread;
 use crate::bottom_pane::ApprovalRequest;
+use crate::bottom_pane::PromptAutocompleteResult;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
@@ -257,6 +258,11 @@ pub(crate) enum AppEvent {
         query: String,
         matches: Vec<FileMatch>,
     },
+
+    /// Result of an asynchronous prompt autocomplete search. The request ID
+    /// and echoed query/range let the UI discard stale results after more
+    /// input arrives.
+    PromptAutocompleteResult(PromptAutocompleteResult),
 
     /// Refresh account rate limits in the background.
     RefreshRateLimits {

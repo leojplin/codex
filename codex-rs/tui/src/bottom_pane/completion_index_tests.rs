@@ -101,6 +101,26 @@ fn fuzzy_matches_dictionary_words() {
 }
 
 #[test]
+fn search_can_be_cancelled_during_candidate_scan() {
+    use std::cell::Cell;
+
+    let mut index = SessionCompletionIndex::default();
+    for i in 0..300 {
+        index.ingest_text(&format!("asynchronous_candidate_{i}"));
+    }
+    let cancel_checks = Cell::new(0usize);
+    let is_cancelled = || {
+        cancel_checks.set(cancel_checks.get().saturating_add(1));
+        cancel_checks.get() > 1
+    };
+
+    let results = index.search_with_dictionary_cancellable("asyn", true, &is_cancelled);
+
+    assert_eq!(results, None);
+    assert!(cancel_checks.get() > 1);
+}
+
+#[test]
 fn dictionary_does_not_duplicate_session_words() {
     let mut index = SessionCompletionIndex::default();
     index.ingest_text("completion");
