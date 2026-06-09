@@ -19,7 +19,7 @@ jobs:
   release:
     name: Build macOS ARM64 release
     runs-on: macos-14
-    timeout-minutes: 90
+    timeout-minutes: 180
     defaults:
       run:
         working-directory: codex-rs
