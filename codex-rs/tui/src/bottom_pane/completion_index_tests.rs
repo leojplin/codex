@@ -7,11 +7,7 @@ fn indexes_words_paths_filenames_and_urls() {
         "Open src/bottom_pane/chat_composer.rs and Cargo.toml, then visit https://example.com/docs?q=codex.",
     );
 
-    assert!(index.len() >= 6);
-
-    let path_results = index.search("src/bot");
-    assert_eq!(path_results[0].text, "src/bottom_pane/chat_composer.rs");
-    assert_eq!(path_results[0].kind, CompletionKind::Path);
+    assert!(index.len() >= 5);
 
     let file_results = index.search("chat");
     assert!(
@@ -24,6 +20,19 @@ fn indexes_words_paths_filenames_and_urls() {
     let url_results = index.search("http");
     assert_eq!(url_results[0].text, "https://example.com/docs?q=codex");
     assert_eq!(url_results[0].kind, CompletionKind::Url);
+}
+
+#[test]
+fn does_not_complete_full_paths() {
+    let mut index = SessionCompletionIndex::default();
+    index.ingest_text("Open src/bottom_pane/chat_composer.rs");
+
+    assert!(
+        !index
+            .search("src/bot")
+            .iter()
+            .any(|result| result.text == "src/bottom_pane/chat_composer.rs")
+    );
 }
 
 #[test]

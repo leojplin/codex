@@ -34,7 +34,6 @@ const _: () = assert!(ENGLISH_DICTIONARY_PAIR_INDEX.len() >= DICTIONARY_PAIR_HEA
 pub(crate) enum CompletionKind {
     Word,
     Filename,
-    Path,
     Url,
     Dictionary,
 }
@@ -44,7 +43,6 @@ impl CompletionKind {
         match self {
             CompletionKind::Word => "session",
             CompletionKind::Filename => "file",
-            CompletionKind::Path => "path",
             CompletionKind::Url => "url",
             CompletionKind::Dictionary => "dict",
         }
@@ -52,8 +50,7 @@ impl CompletionKind {
 
     const fn rank(self) -> u8 {
         match self {
-            CompletionKind::Url => 4,
-            CompletionKind::Path => 3,
+            CompletionKind::Url => 3,
             CompletionKind::Filename => 2,
             CompletionKind::Word => 1,
             CompletionKind::Dictionary => 0,
@@ -778,7 +775,6 @@ fn extract_from_token(raw: &str, candidates: &mut Vec<(String, CompletionKind)>)
     }
 
     if looks_like_path(raw) {
-        candidates.push((raw.to_string(), CompletionKind::Path));
         if let Some(file_name) = basename(raw).filter(|name| looks_like_filename(name)) {
             candidates.push((file_name.to_string(), CompletionKind::Filename));
         }
