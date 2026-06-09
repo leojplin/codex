@@ -36,6 +36,29 @@ fn does_not_complete_full_paths() {
 }
 
 #[test]
+fn does_not_treat_common_dotted_tokens_as_filenames() {
+    let mut index = SessionCompletionIndex::default();
+    index.ingest_text("github.com v0.1.4 crate.module foo.bar 127.0.0.1 example.local");
+
+    for (query, candidate) in [
+        ("gith", "github.com"),
+        ("v0", "v0.1.4"),
+        ("crate", "crate.module"),
+        ("foo", "foo.bar"),
+        ("127", "127.0.0.1"),
+        ("exam", "example.local"),
+    ] {
+        assert!(
+            !index
+                .search_with_dictionary(query, false)
+                .iter()
+                .any(|result| result.text == candidate && result.kind == CompletionKind::Filename),
+            "{candidate} should not be a file completion"
+        );
+    }
+}
+
+#[test]
 fn ranks_prefix_matches_before_fuzzy_matches() {
     let mut index = SessionCompletionIndex::default();
     index.ingest_text("application a-p-p-l-e");
@@ -127,6 +150,36 @@ fn search_can_be_cancelled_during_candidate_scan() {
 
     assert_eq!(results, None);
     assert!(cancel_checks.get() > 1);
+}
+
+#[test]
+fn prefix_matches_do_not_scan_unrelated_candidates() {
+    use std::cell::Cell;
+
+    let mut index = SessionCompletionIndex::default();
+    for i in 0..300 {
+        index.ingest_text(&format!("unrelated_candidate_{i}"));
+    }
+    for i in 0..MAX_COMPLETION_RESULTS {
+        index.ingest_text(&format!("target_candidate_{i}"));
+    }
+    let cancel_checks = Cell::new(0usize);
+    let is_cancelled = || {
+        cancel_checks.set(cancel_checks.get().saturating_add(1));
+        cancel_checks.get() > 1
+    };
+
+    let results = index
+        .search_with_dictionary_cancellable("target", false, &is_cancelled)
+        .unwrap();
+
+    assert_eq!(cancel_checks.get(), 1);
+    assert_eq!(results.len(), MAX_COMPLETION_RESULTS);
+    assert!(
+        results
+            .iter()
+            .all(|result| result.text.starts_with("target_candidate_"))
+    );
 }
 
 #[test]

@@ -2034,6 +2034,33 @@ mod tests {
         assert!(pane.prompt_autocomplete.popup_active());
     }
 
+    #[test]
+    fn prompt_autocomplete_keeps_existing_popup_until_replacement_result() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane(tx);
+        let cell = PlainHistoryCell::new(vec![Line::from("asynchronous_completion")]);
+
+        pane.ingest_completion_history_cell(&cell);
+        pane.insert_str("as");
+        let initial_result = wait_for_prompt_autocomplete_result(&mut rx);
+        pane.on_prompt_autocomplete_result(initial_result);
+        assert!(pane.prompt_autocomplete.popup_active());
+
+        pane.insert_str("y");
+        assert!(pane.prompt_autocomplete.popup_active());
+
+        pane.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(pane.composer_text(), "asy");
+        assert!(pane.prompt_autocomplete.popup_active());
+
+        let replacement_result = wait_for_prompt_autocomplete_result(&mut rx);
+        assert_eq!(replacement_result.query, "asy");
+        pane.on_prompt_autocomplete_result(replacement_result);
+
+        assert!(pane.prompt_autocomplete.popup_active());
+    }
+
     fn exec_request() -> ApprovalRequest {
         ApprovalRequest::Exec {
             thread_id: codex_protocol::ThreadId::new(),

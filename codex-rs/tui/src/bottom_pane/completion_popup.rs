@@ -17,6 +17,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::style::accent_style;
 use crate::style::user_message_style;
 
+use super::chat_composer::CompletionContext;
 use super::completion_index::CompletionMatch;
 use super::completion_index::MAX_COMPLETION_RESULTS;
 use super::scroll_state::ScrollState;
@@ -80,6 +81,10 @@ impl CompletionPopup {
             .selected_idx
             .and_then(|idx| self.matches.get(idx))
             .map(|completion_match| (self.token_range.clone(), completion_match.text.clone()))
+    }
+
+    pub(crate) fn matches_context(&self, context: &CompletionContext) -> bool {
+        self.query == context.query && self.token_range == context.token_range
     }
 
     pub(crate) fn token_query(&self) -> &str {
