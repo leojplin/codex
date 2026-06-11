@@ -147,6 +147,7 @@ async fn slash_commands_run_during_mcp_startup() {
     notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
 
     assert!(chat.bottom_pane.is_task_running());
+    assert!(!chat.is_user_turn_pending_or_running());
     chat.dispatch_command(SlashCommand::Resume);
 
     assert_matches!(rx.try_recv(), Ok(AppEvent::OpenResumePicker));
@@ -160,6 +161,7 @@ async fn composer_slash_commands_run_during_mcp_startup() {
     notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
 
     assert!(chat.bottom_pane.is_task_running());
+    assert!(!chat.is_user_turn_pending_or_running());
     chat.bottom_pane
         .set_composer_text("/clear".to_string(), Vec::new(), Vec::new());
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));

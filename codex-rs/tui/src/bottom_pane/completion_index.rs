@@ -73,13 +73,18 @@ pub(crate) struct CompletionMatch {
 
 #[derive(Clone, Debug)]
 struct CompletionCandidate {
+    key: String,
     text: String,
     kind: CompletionKind,
     frequency: u32,
     last_seen_seq: u64,
-    key_byte_len: usize,
-    key_ascii_mask: [u64; 2],
     key_is_ascii: bool,
+}
+
+impl AsRef<str> for CompletionCandidate {
+    fn as_ref(&self) -> &str {
+        &self.key
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -89,8 +94,6 @@ struct CandidateView<'a> {
     kind: CompletionKind,
     frequency: u32,
     last_seen_seq: u64,
-    key_byte_len: usize,
-    key_ascii_mask: [u64; 2],
     key_is_ascii: bool,
 }
 
@@ -100,23 +103,23 @@ impl AsRef<str> for CandidateView<'_> {
     }
 }
 
-fn candidate_view<'a>(key: &'a str, candidate: &'a CompletionCandidate) -> CandidateView<'a> {
+fn candidate_view(candidate: &CompletionCandidate) -> CandidateView<'_> {
     CandidateView {
         text: &candidate.text,
-        key,
+        key: &candidate.key,
         kind: candidate.kind,
         frequency: candidate.frequency,
         last_seen_seq: candidate.last_seen_seq,
-        key_byte_len: candidate.key_byte_len,
-        key_ascii_mask: candidate.key_ascii_mask,
         key_is_ascii: candidate.key_is_ascii,
     }
 }
 
 #[derive(Default)]
 pub(crate) struct SessionCompletionIndex {
-    candidates: HashMap<String, CompletionCandidate>,
+    candidates: Vec<CompletionCandidate>,
+    candidate_indices: HashMap<String, usize>,
     prefix_keys: Vec<String>,
+    non_ascii_candidates: usize,
     next_seq: u64,
 }
 
@@ -205,12 +208,11 @@ impl SessionCompletionIndex {
         if key.is_empty() {
             return;
         }
-        let key_byte_len = key.len();
-        let key_ascii_mask = ascii_char_mask(&key);
         let key_is_ascii = key.is_ascii();
 
         self.next_seq = self.next_seq.wrapping_add(1);
-        if let Some(existing) = self.candidates.get_mut(&key) {
+        if let Some(&existing_index) = self.candidate_indices.get(&key) {
+            let existing = &mut self.candidates[existing_index];
             existing.frequency = existing.frequency.saturating_add(1);
             existing.last_seen_seq = self.next_seq;
             if kind.rank() >= existing.kind.rank() {
@@ -220,24 +222,25 @@ impl SessionCompletionIndex {
             return;
         }
 
+        let candidate_index = self.candidates.len();
         let insert_at = self
             .prefix_keys
             .binary_search_by(|probe| probe.as_str().cmp(&key))
             .unwrap_or_else(|idx| idx);
         self.prefix_keys.insert(insert_at, key.clone());
+        self.candidate_indices.insert(key.clone(), candidate_index);
+        if !key_is_ascii {
+            self.non_ascii_candidates = self.non_ascii_candidates.saturating_add(1);
+        }
 
-        self.candidates.insert(
+        self.candidates.push(CompletionCandidate {
             key,
-            CompletionCandidate {
-                text: text.to_string(),
-                kind,
-                frequency: 1,
-                last_seen_seq: self.next_seq,
-                key_byte_len,
-                key_ascii_mask,
-                key_is_ascii,
-            },
-        );
+            text: text.to_string(),
+            kind,
+            frequency: 1,
+            last_seen_seq: self.next_seq,
+            key_is_ascii,
+        });
     }
 
     fn session_literal_matches<'a>(
@@ -260,11 +263,12 @@ impl SessionCompletionIndex {
             if should_cancel_scan(&mut scanned, is_cancelled) {
                 return None;
             }
-            let Some(candidate) = self.candidates.get(key) else {
+            let Some(&candidate_index) = self.candidate_indices.get(key) else {
                 continue;
             };
+            let candidate = &self.candidates[candidate_index];
             if let Some(ranked) = rank_candidate(
-                candidate_view(key, candidate),
+                candidate_view(candidate),
                 query,
                 query_lower,
                 /*include_fuzzy*/ false,
@@ -297,26 +301,6 @@ impl SessionCompletionIndex {
         }
 
         let max_typos = completion_max_typos(query_lower);
-        let min_len = query_lower.len().saturating_sub(max_typos as usize);
-        let query_mask = ascii_char_mask(query_lower);
-        let allowed_missing_chars = u32::from(max_typos);
-        let mut candidates = Vec::new();
-        let mut scanned = 0usize;
-        for (key, candidate) in self.candidates.iter() {
-            if should_cancel_scan(&mut scanned, is_cancelled) {
-                return None;
-            }
-            let view = candidate_view(key, candidate);
-            if !view.key_is_ascii
-                || has_literal_match(view.key, query_lower)
-                || view.key_byte_len < min_len
-                || missing_ascii_chars(view.key_ascii_mask, query_mask) > allowed_missing_chars
-            {
-                continue;
-            }
-            candidates.push(view);
-        }
-
         let config = FrizbeeConfig {
             max_typos: Some(max_typos),
             sort: false,
@@ -326,14 +310,19 @@ impl SessionCompletionIndex {
         let mut matches = Vec::new();
         let mut matcher = FrizbeeMatcher::new(query_lower, &config);
         let mut scanned = 0usize;
-        for matched in matcher.match_iter(candidates.as_slice()) {
+        for matched in matcher.match_iter(self.candidates.as_slice()) {
             if should_cancel_scan(&mut scanned, is_cancelled) {
                 return None;
+            }
+            let candidate = &self.candidates[matched.index as usize];
+            let view = candidate_view(candidate);
+            if !view.key_is_ascii || has_literal_match(view.key, query_lower) {
+                continue;
             }
             push_top_ranked_match(
                 &mut matches,
                 RankedMatch {
-                    candidate: candidates[matched.index as usize],
+                    candidate: view,
                     match_class: MatchClass::Fuzzy,
                     fuzzy_score: -(matched.score as i32),
                     match_indices: RankedMatchIndices::FrizbeeFuzzy { max_typos },
@@ -341,10 +330,12 @@ impl SessionCompletionIndex {
                 limit,
             );
         }
-        for ranked in
-            self.session_legacy_fuzzy_matches(query, query_lower, true, limit, is_cancelled)?
-        {
-            push_top_ranked_match(&mut matches, ranked, limit);
+        if self.non_ascii_candidates > 0 {
+            for ranked in
+                self.session_legacy_fuzzy_matches(query, query_lower, true, limit, is_cancelled)?
+            {
+                push_top_ranked_match(&mut matches, ranked, limit);
+            }
         }
         Some(matches)
     }
@@ -359,11 +350,11 @@ impl SessionCompletionIndex {
     ) -> Option<Vec<RankedMatch<'a>>> {
         let mut matches = Vec::new();
         let mut scanned = 0usize;
-        for (key, candidate) in self.candidates.iter() {
+        for candidate in self.candidates.iter() {
             if should_cancel_scan(&mut scanned, is_cancelled) {
                 return None;
             }
-            let view = candidate_view(key, candidate);
+            let view = candidate_view(candidate);
             if has_literal_match(view.key, query_lower) || (only_non_ascii && view.key_is_ascii) {
                 continue;
             }
@@ -424,7 +415,7 @@ impl SessionCompletionIndex {
                 return None;
             }
             let record = dictionary_record_at(word_id);
-            if self.candidates.contains_key(record.text) {
+            if self.candidate_indices.contains_key(record.text) {
                 continue;
             }
 
@@ -505,7 +496,7 @@ impl SessionCompletionIndex {
             if should_cancel_scan(&mut scanned, is_cancelled) {
                 return None;
             }
-            if self.candidates.contains_key(record.text)
+            if self.candidate_indices.contains_key(record.text)
                 || dictionary_has_literal_match(record.text, query_lower)
                 || record.byte_len < min_len
                 || missing_ascii_letters(record.letter_mask, query_mask) > allowed_missing_letters
@@ -1004,23 +995,6 @@ fn completion_max_typos(query_lower: &str) -> u16 {
 
 fn has_literal_match(candidate_key: &str, query_lower: &str) -> bool {
     candidate_key == query_lower || candidate_key.contains(query_lower)
-}
-
-fn ascii_char_mask(text: &str) -> [u64; 2] {
-    let mut mask = [0u64; 2];
-    for byte in text.bytes() {
-        if byte.is_ascii() {
-            let idx = (byte / 64) as usize;
-            let bit = byte % 64;
-            mask[idx] |= 1 << bit;
-        }
-    }
-    mask
-}
-
-fn missing_ascii_chars(candidate_mask: [u64; 2], query_mask: [u64; 2]) -> u32 {
-    (query_mask[0] & !candidate_mask[0]).count_ones()
-        + (query_mask[1] & !candidate_mask[1]).count_ones()
 }
 
 fn ascii_letter_mask(text: &str) -> u32 {

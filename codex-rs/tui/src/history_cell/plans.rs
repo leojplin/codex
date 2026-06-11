@@ -39,6 +39,10 @@ impl HistoryCell for StreamingPlanTailCell {
         plain_lines(visible_lines(self.lines.clone()))
     }
 
+    fn is_prompt_completion_source(&self) -> bool {
+        true
+    }
+
     fn is_stream_continuation(&self) -> bool {
         self.is_stream_continuation
     }
@@ -133,6 +137,10 @@ impl HistoryCell for ProposedPlanCell {
     fn raw_lines(&self) -> Vec<Line<'static>> {
         raw_lines_from_source(&self.plan_markdown)
     }
+
+    fn is_prompt_completion_source(&self) -> bool {
+        true
+    }
 }
 
 impl HistoryCell for ProposedPlanStreamCell {
@@ -150,6 +158,10 @@ impl HistoryCell for ProposedPlanStreamCell {
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         plain_lines(visible_lines(self.lines.clone()))
+    }
+
+    fn is_prompt_completion_source(&self) -> bool {
+        true
     }
 
     fn is_stream_continuation(&self) -> bool {
@@ -234,5 +246,9 @@ impl HistoryCell for PlanUpdateCell {
             }
         }
         lines
+    }
+
+    fn is_prompt_completion_source(&self) -> bool {
+        true
     }
 }
