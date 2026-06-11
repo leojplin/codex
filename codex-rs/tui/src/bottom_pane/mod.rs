@@ -1909,12 +1909,21 @@ mod tests {
     use crate::app::app_server_requests::ResolvedAppServerRequest;
     use crate::app_command::AppCommand as Op;
     use crate::app_event::AppEvent;
+    use crate::history_cell::AgentMarkdownCell;
+    use crate::history_cell::McpInvocation;
     use crate::history_cell::PlainHistoryCell;
+    use crate::history_cell::new_active_mcp_tool_call;
+    use crate::history_cell::new_plan_update;
+    use crate::history_cell::new_proposed_plan;
+    use crate::history_cell::new_user_prompt;
     use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
     use crate::status_indicator_widget::StatusDetailsCapitalization;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
     use codex_app_server_protocol::CommandExecutionApprovalDecision;
+    use codex_protocol::plan_tool::PlanItemArg;
+    use codex_protocol::plan_tool::StepStatus;
+    use codex_protocol::plan_tool::UpdatePlanArgs;
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
     use crossterm::event::KeyEventKind;
@@ -1924,6 +1933,7 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use std::cell::Cell;
+    use std::path::Path;
     use std::rc::Rc;
     use std::thread::sleep;
     use std::time::Instant;
@@ -1969,6 +1979,10 @@ mod tests {
         })
     }
 
+    fn assistant_completion_cell(text: &str) -> AgentMarkdownCell {
+        AgentMarkdownCell::new(text.to_string(), Path::new("/tmp"))
+    }
+
     fn wait_for_prompt_autocomplete_result(
         rx: &mut UnboundedReceiver<AppEvent>,
     ) -> PromptAutocompleteResult {
@@ -1995,7 +2009,7 @@ mod tests {
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = test_pane(tx);
-        let cell = PlainHistoryCell::new(vec![Line::from("asynchronous_completion")]);
+        let cell = assistant_completion_cell("asynchronous_completion");
 
         pane.ingest_completion_history_cell(&cell);
         pane.insert_str("asyn");
@@ -2014,7 +2028,7 @@ mod tests {
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = test_pane(tx);
-        let cell = PlainHistoryCell::new(vec![Line::from("asynchronous_completion")]);
+        let cell = assistant_completion_cell("asynchronous_completion");
 
         pane.ingest_completion_history_cell(&cell);
         pane.insert_str("as");
@@ -2037,7 +2051,7 @@ mod tests {
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);
         let mut pane = test_pane(tx);
-        let cell = PlainHistoryCell::new(vec![Line::from("asynchronous_completion")]);
+        let cell = assistant_completion_cell("asynchronous_completion");
 
         pane.ingest_completion_history_cell(&cell);
         pane.insert_str("as");
@@ -2057,6 +2071,50 @@ mod tests {
         pane.on_prompt_autocomplete_result(replacement_result);
 
         assert!(pane.prompt_autocomplete.popup_active());
+    }
+
+    #[test]
+    fn prompt_autocomplete_indexes_selected_history_cells() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = test_pane(tx);
+        let assistant = assistant_completion_cell("assistant_completion_candidate");
+        let user = new_user_prompt(
+            "user_completion_candidate".to_string(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        let proposed_plan = new_proposed_plan(
+            "proposed_plan_completion_candidate".to_string(),
+            Path::new("/tmp"),
+        );
+        let plan_update = new_plan_update(UpdatePlanArgs {
+            explanation: Some("plan_update_completion_candidate".to_string()),
+            plan: vec![PlanItemArg {
+                step: "step_completion_candidate".to_string(),
+                status: StepStatus::InProgress,
+            }],
+        });
+        let plain = PlainHistoryCell::new(vec![Line::from("plain_completion_candidate")]);
+        let mcp = new_active_mcp_tool_call(
+            "call-1".to_string(),
+            McpInvocation {
+                server: "server".to_string(),
+                tool: "lookup".to_string(),
+                arguments: Some(serde_json::json!({
+                    "needle": "mcp_completion_candidate"
+                })),
+            },
+            /*animations_enabled*/ false,
+        );
+
+        assert!(pane.prompt_autocomplete.ingest_history_cell(&assistant));
+        assert!(pane.prompt_autocomplete.ingest_history_cell(&user));
+        assert!(pane.prompt_autocomplete.ingest_history_cell(&proposed_plan));
+        assert!(pane.prompt_autocomplete.ingest_history_cell(&plan_update));
+        assert!(!pane.prompt_autocomplete.ingest_history_cell(&plain));
+        assert!(!pane.prompt_autocomplete.ingest_history_cell(&mcp));
     }
 
     fn exec_request() -> ApprovalRequest {

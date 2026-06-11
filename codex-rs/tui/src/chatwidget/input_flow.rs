@@ -138,7 +138,7 @@ impl ChatWidget {
     }
 
     pub(super) fn is_user_turn_pending_or_running(&self) -> bool {
-        self.input_queue.user_turn_pending_start || self.bottom_pane.is_task_running()
+        self.input_queue.user_turn_pending_start || self.turn_lifecycle.agent_turn_running
     }
 
     pub(super) fn only_user_shell_commands_running(&self) -> bool {

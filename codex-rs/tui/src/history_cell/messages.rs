@@ -191,6 +191,10 @@ impl HistoryCell for UserHistoryCell {
         }
         lines
     }
+
+    fn is_prompt_completion_source(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug)]
@@ -324,6 +328,10 @@ impl HistoryCell for AgentMessageCell {
         plain_lines(visible_lines(self.lines.clone()))
     }
 
+    fn is_prompt_completion_source(&self) -> bool {
+        true
+    }
+
     fn is_stream_continuation(&self) -> bool {
         !self.is_first_line
     }
@@ -393,6 +401,10 @@ impl HistoryCell for AgentMarkdownCell {
     fn raw_lines(&self) -> Vec<Line<'static>> {
         raw_lines_from_source(&self.markdown_source)
     }
+
+    fn is_prompt_completion_source(&self) -> bool {
+        true
+    }
 }
 
 /// Transient active-cell representation of the mutable tail of an agent stream.
@@ -440,6 +452,10 @@ impl HistoryCell for StreamingAgentTailCell {
 
     fn raw_lines(&self) -> Vec<Line<'static>> {
         plain_lines(self.display_lines(/*width*/ u16::MAX))
+    }
+
+    fn is_prompt_completion_source(&self) -> bool {
+        true
     }
 
     fn is_stream_continuation(&self) -> bool {

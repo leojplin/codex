@@ -264,7 +264,7 @@ impl PromptAutocomplete {
     }
 
     pub(crate) fn ingest_history_cell(&mut self, cell: &dyn HistoryCell) -> bool {
-        if !self.enabled {
+        if !self.enabled || !cell.is_prompt_completion_source() {
             return false;
         }
 
