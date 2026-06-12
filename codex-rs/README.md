@@ -12,7 +12,7 @@ The goal is to make the prompt behave closer to a code editor: completions appea
 
 ### Latest Release
 
-Install the latest macOS ARM64 release:
+The script downloads the binary for Github release and copies to the local bin path, will not override original 'codex':
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leojplin/codex/main/codex-rs/setup.sh | bash
@@ -63,22 +63,6 @@ cargo install --locked --path cli --bin codex-fork --force
 
 This installs to `~/.cargo/bin/codex-fork`.
 
-### Creating A Release
-
-The GitHub release workflow builds only the macOS ARM64 binary.
-
-Create and push a tag to publish a release:
-
-```bash
-git tag codex-fork-v0.1.0
-git push origin codex-fork-v0.1.0
-```
-
-The workflow publishes:
-
-- `codex-fork-aarch64-apple-darwin.tar.gz`
-- `SHA256SUMS`
-- `codex-fork.rb`
 
 ## Usage
 
@@ -229,31 +213,3 @@ This keeps the composer height tied to the prompt itself while allowing the popu
 - `tui/src/app/prompt_autocomplete_overlay.rs`: draws the raw terminal overlay and restores affected transcript rows.
 - `tui/src/custom_terminal.rs`: writes overlay buffers directly to the terminal.
 - `tui/assets/completion/`: static dictionary words and precomputed dictionary indexes.
-
-## Build
-
-Compile the TUI package:
-
-```bash
-cargo build -p codex-tui
-```
-
-Run the CLI manually:
-
-```bash
-cargo run -p codex-cli --bin codex-fork
-```
-
-## Manual Verification
-
-In a Codex session:
-
-1. Generate transcript output that includes words, file paths, filenames, and URLs.
-2. Start typing a partial token in the prompt.
-3. Confirm the popup appears near the cursor.
-4. Confirm session candidates appear immediately.
-5. Type a partial English word and confirm dictionary candidates appear immediately.
-6. Press `Tab` to cycle through candidates.
-7. Press `Enter` to accept the selected candidate.
-8. Confirm only the active token is replaced.
-9. Press `Esc` and confirm the popup is dismissed.
