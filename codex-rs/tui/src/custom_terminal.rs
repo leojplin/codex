@@ -48,6 +48,8 @@ use ratatui::style::Modifier;
 use ratatui::widgets::WidgetRef;
 use unicode_width::UnicodeWidthStr;
 
+const INVALIDATED_CELL_SYMBOL: &str = "\0";
+
 /// Returns the display width of a cell symbol, ignoring OSC escape sequences.
 ///
 /// OSC sequences (e.g. OSC 8 hyperlinks: `\x1B]8;;URL\x07`) are terminal
@@ -487,11 +489,38 @@ where
         Ok(())
     }
 
-    /// Force the next draw pass to repaint the entire viewport by resetting the
-    /// diff buffer. Call this after raw terminal operations that move screen
-    /// content outside ratatui's knowledge.
+    /// Force the next draw pass to repaint the entire viewport by marking the
+    /// diff buffer dirty. Call this after raw terminal operations that move
+    /// screen content outside ratatui's knowledge.
     pub fn invalidate_viewport(&mut self) {
-        self.previous_buffer_mut().reset();
+        let previous = self.previous_buffer_mut();
+        previous.reset();
+        for cell in &mut previous.content {
+            cell.set_symbol(INVALIDATED_CELL_SYMBOL);
+        }
+    }
+
+    /// Force the next draw pass to repaint a terminal region by marking the
+    /// corresponding diff-buffer cells dirty.
+    pub(crate) fn invalidate_region(&mut self, area: Rect) {
+        let previous = self.previous_buffer_mut();
+        let left = previous.area.x.max(area.x);
+        let top = previous.area.y.max(area.y);
+        let right = previous.area.right().min(area.right());
+        let bottom = previous.area.bottom().min(area.bottom());
+        if left >= right || top >= bottom {
+            return;
+        }
+
+        let buffer_width = usize::from(previous.area.width);
+        for y in top..bottom {
+            let row_start = usize::from(y.saturating_sub(previous.area.y)) * buffer_width;
+            let start = row_start + usize::from(left.saturating_sub(previous.area.x));
+            let end = start + usize::from(right - left);
+            for cell in &mut previous.content[start..end] {
+                cell.set_symbol(INVALIDATED_CELL_SYMBOL);
+            }
+        }
     }
 
     pub(crate) fn draw_overlay_buffer(&mut self, overlay: &Buffer) -> io::Result<()> {
@@ -932,6 +961,77 @@ mod tests {
                 .iter()
                 .any(|command| matches!(command, DrawCommand::ClearToEnd { x: 2, y: 0, .. })),
             "expected clear-to-end to start after the remaining wide char; commands: {commands:?}"
+        );
+    }
+
+    #[test]
+    fn invalidate_viewport_repaints_blank_cells_before_text() {
+        let mut terminal =
+            Terminal::with_options(CaptureBackend::new(/*width*/ 5, /*height*/ 1))
+                .expect("terminal");
+        terminal.set_viewport_area(Rect::new(0, 0, 5, 1));
+        terminal
+            .current_buffer_mut()
+            .set_string(3, 0, "X", Style::default());
+
+        terminal.invalidate_viewport();
+
+        let commands = diff_buffers(terminal.previous_buffer(), terminal.current_buffer());
+        for x in 0..3 {
+            assert!(
+                commands.iter().any(
+                    |command| matches!(command, DrawCommand::Put { x: command_x, y: 0, cell }
+                        if *command_x == x && cell.symbol() == " ")
+                ),
+                "expected invalidation to repaint blank cell at x={x}; commands: {commands:?}",
+            );
+        }
+        assert!(
+            commands.iter().any(
+                |command| matches!(command, DrawCommand::Put { x: 3, y: 0, cell }
+                    if cell.symbol() == "X")
+            ),
+            "expected invalidation to repaint row text; commands: {commands:?}",
+        );
+    }
+
+    #[test]
+    fn invalidate_region_repaints_only_intersecting_rows() {
+        let mut terminal =
+            Terminal::with_options(CaptureBackend::new(/*width*/ 5, /*height*/ 2))
+                .expect("terminal");
+        terminal.set_viewport_area(Rect::new(0, 0, 5, 2));
+        terminal
+            .current_buffer_mut()
+            .set_string(3, 0, "X", Style::default());
+        terminal
+            .current_buffer_mut()
+            .set_string(0, 1, "YYYYY", Style::default());
+        terminal
+            .previous_buffer_mut()
+            .set_string(3, 0, "X", Style::default());
+        terminal
+            .previous_buffer_mut()
+            .set_string(0, 1, "YYYYY", Style::default());
+
+        terminal.invalidate_region(Rect::new(0, 0, 4, 1));
+
+        let commands = diff_buffers(terminal.previous_buffer(), terminal.current_buffer());
+        for x in 0..4 {
+            assert!(
+                commands.iter().any(
+                    |command| matches!(command, DrawCommand::Put { x: command_x, y: 0, .. }
+                        if *command_x == x)
+                ),
+                "expected invalidation to repaint cell at x={x}, y=0; commands: {commands:?}",
+            );
+        }
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                DrawCommand::Put { y: 1, .. } | DrawCommand::ClearToEnd { y: 1, .. }
+            )),
+            "expected row outside invalidated region to remain untouched; commands: {commands:?}",
         );
     }
 

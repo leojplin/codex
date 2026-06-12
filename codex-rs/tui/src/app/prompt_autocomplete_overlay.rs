@@ -18,7 +18,7 @@ impl App {
 
         let viewport = tui.terminal.viewport_area;
         if rect.y < viewport.bottom() && rect.bottom() > viewport.y {
-            tui.terminal.invalidate_viewport();
+            tui.terminal.invalidate_region(rect);
         }
     }
 
